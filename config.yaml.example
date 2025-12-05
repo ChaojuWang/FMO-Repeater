@@ -1,0 +1,46 @@
+# FMO Echo 服务配置文件示例
+#
+# 本配置文件使用 YAML 格式
+# 复制此文件为 config.yaml 并根据实际情况修改配置
+#
+# 重要提示：
+# - 请勿将包含真实密码的 config.yaml 文件提交到版本控制系统
+# - 生产环境中应使用环境变量或其他安全方式管理敏感信息
+
+# MQTT 代理配置
+mqtt:
+  broker: "your-mqtt-broker.com"  # MQTT 代理地址
+  port: 1883                       # MQTT 代理端口
+  username: "your_username"        # 用户名
+  password: "your_password"        # 密码
+  client_id_prefix: "fmo_echo"    # 客户端 ID 前缀，实际 ID 为 prefix_随机数
+  keepalive: 60                    # 保持连接的心跳间隔（秒）
+
+# 主题配置
+topics:
+  subscribe: "FMO/RAW"  # 订阅的主题（接收原始 FMO 消息）
+  publish: "FMO/RAW"    # 发布的主题（重放修改后的消息）
+
+# Echo 服务配置
+echo:
+  timeout: 5.0              # 超时时间（秒），当此时间内没有新消息时触发重放
+  uid: 65535                # Echo 时使用的固定 UID（65535 表示 Echo UID）
+  callsign_prefix: "RE>"    # 呼号前缀，原始呼号 "BD8BOJ" 变为 "RE>BD8BOJ"
+
+# 日志配置
+logging:
+  level: "INFO"                    # 日志级别: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  console: true                     # 是否输出到控制台
+  file: "logs/fmo_echo.log"        # 日志文件路径
+  max_bytes: 10485760              # 单个日志文件最大大小（10MB）
+  backup_count: 5                   # 保留的日志文件备份数量
+
+# 守护进程配置
+daemon:
+  enabled: false                    # 是否启用守护进程模式
+  pid_file: "/var/run/fmo_echo.pid" # PID 文件路径（仅守护进程模式使用）
+
+# 使用说明：
+# 1. 复制此文件：cp config.yaml.example config.yaml
+# 2. 编辑 config.yaml，填入实际的配置信息
+# 3. 运行服务：python main.py start
