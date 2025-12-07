@@ -38,8 +38,8 @@ FMO（FM Over Internet）是一种通过网络中继 FM 信号的设备，允许
 
 1. **克隆仓库**
    ```bash
-   git clone https://github.com/your-username/fmo-repeater.git
-   cd fmo-repeater
+   git clone https://github.com/ChaojuWang/FMO-Repeater.git
+   cd FMO-Repeater
    ```
 
 2. **安装依赖**

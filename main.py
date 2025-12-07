@@ -9,6 +9,7 @@ FMO Repeater 服务主入口
 - 自定义配置文件
 """
 
+import os
 import sys
 import argparse
 import time
@@ -140,8 +141,10 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    # 创建守护进程对象
-    daemon = Daemon(args.pid_file)
+    # 创建守护进程对象，指定工作目录为项目目录
+    # 获取当前脚本所在目录的绝对路径
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    daemon = Daemon(args.pid_file, working_dir=current_dir)
 
     # 执行相应操作
     if args.action == 'start':
