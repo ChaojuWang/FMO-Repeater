@@ -17,7 +17,7 @@ DEFAULT_CONFIG = {
         'port': 1883,
         'username': '',
         'password': '',
-        'client_id_prefix': 'fmo_echo',
+        'client_id_prefix': 'fmo_repeater',
         'keepalive': 60,
     },
     'topics': {
@@ -32,13 +32,13 @@ DEFAULT_CONFIG = {
     'logging': {
         'level': 'INFO',
         'console': True,
-        'file': 'logs/fmo_echo.log',
+        'file': 'logs/fmo_repeater.log',
         'max_bytes': 10485760,  # 10MB
         'backup_count': 5,
     },
     'daemon': {
         'enabled': False,
-        'pid_file': '/var/run/fmo_echo.pid',
+        'pid_file': '/var/run/fmo_repeater.pid',
     }
 }
 

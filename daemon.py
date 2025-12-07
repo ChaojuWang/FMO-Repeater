@@ -215,13 +215,13 @@ if __name__ == '__main__':
 
     def test_daemon():
         """测试守护进程函数"""
-        with open('/tmp/fmo_echo_test.log', 'a') as f:
+        with open('/tmp/fmo_repeater_test.log', 'a') as f:
             for i in range(30):
                 f.write(f"守护进程运行中... {i}\n")
                 f.flush()
                 time.sleep(1)
 
-    daemon = Daemon('/tmp/fmo_echo_test.pid')
+    daemon = Daemon('/tmp/fmo_repeater_test.pid')
 
     if len(sys.argv) == 2:
         if sys.argv[1] == 'start':

@@ -1,4 +1,4 @@
-# FMO Echo 服务配置文件示例
+# FMO Repeater 服务配置文件示例
 #
 # 本配置文件使用 YAML 格式
 # 复制此文件为 config.yaml 并根据实际情况修改配置
@@ -13,7 +13,7 @@ mqtt:
   port: 1883                       # MQTT 代理端口
   username: "your_username"        # 用户名
   password: "your_password"        # 密码
-  client_id_prefix: "fmo_echo"    # 客户端 ID 前缀，实际 ID 为 prefix_随机数
+  client_id_prefix: "fmo_repeater"    # 客户端 ID 前缀，实际 ID 为 prefix_随机数
   keepalive: 60                    # 保持连接的心跳间隔（秒）
 
 # 主题配置
@@ -31,14 +31,14 @@ echo:
 logging:
   level: "INFO"                    # 日志级别: DEBUG, INFO, WARNING, ERROR, CRITICAL
   console: true                     # 是否输出到控制台
-  file: "logs/fmo_echo.log"        # 日志文件路径
+  file: "logs/fmo_repeater.log"        # 日志文件路径
   max_bytes: 10485760              # 单个日志文件最大大小（10MB）
   backup_count: 5                   # 保留的日志文件备份数量
 
 # 守护进程配置
 daemon:
   enabled: false                    # 是否启用守护进程模式
-  pid_file: "/var/run/fmo_echo.pid" # PID 文件路径（仅守护进程模式使用）
+  pid_file: "/var/run/fmo_repeater.pid" # PID 文件路径（仅守护进程模式使用）
 
 # 使用说明：
 # 1. 复制此文件：cp config.yaml.example config.yaml

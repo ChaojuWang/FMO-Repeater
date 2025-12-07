@@ -1,10 +1,10 @@
 """
-FMO Echo 服务核心模块
+FMO Repeater 服务核心模块
 
-实现完整的 FMO Echo 服务，包括：
+实现完整的 FMO Repeater 服务，包括：
 - MQTT 连接和消息订阅
 - 消息缓存和超时检测
-- 头部重写和消息重放
+- Echo 功能（头部重写和消息重放）
 - 日志记录和错误处理
 """
 
@@ -24,20 +24,20 @@ import paho.mqtt.enums
 from fmo_header import FMORawHeader, replace_header_in_stream
 
 
-class FMOEchoService:
+class FMORepeaterService:
     """
-    FMO Echo 服务主类
+    FMO Repeater 服务主类
 
     功能：
     1. 订阅 MQTT 主题接收 FMO 消息
     2. 缓存连续接收到的消息
     3. 检测超时（无新消息）
-    4. 重写头部并重放所有缓存的消息
+    4. Echo 功能：重写头部并重放所有缓存的消息
     """
 
     def __init__(self, config: Dict[str, Any]):
         """
-        初始化 FMO Echo 服务
+        初始化 FMO Repeater 服务
 
         Args:
             config: 配置字典
@@ -62,7 +62,7 @@ class FMOEchoService:
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
-        self.logger.info("FMO Echo 服务已初始化")
+        self.logger.info("FMO Repeater 服务已初始化")
         self.logger.info(f"超时设置: {self.config['echo']['timeout']} 秒")
         self.logger.info(f"订阅主题: {self.config['topics']['subscribe']}")
         self.logger.info(f"发布主题: {self.config['topics']['publish']}")
@@ -74,7 +74,7 @@ class FMOEchoService:
         Returns:
             logging.Logger: 配置好的日志记录器
         """
-        logger = logging.getLogger('FMOEcho')
+        logger = logging.getLogger('FMORepeater')
         logger.setLevel(getattr(logging, self.config['logging']['level']))
 
         # 清除已有的处理器
@@ -331,7 +331,7 @@ class FMOEchoService:
         3. 重复直到服务停止
         """
         self.running = True
-        self.logger.info("FMO Echo 服务已启动")
+        self.logger.info("FMO Repeater 服务已启动")
 
         try:
             while self.running:
@@ -361,7 +361,7 @@ class FMOEchoService:
             return
 
         self.running = False
-        self.logger.info("正在停止 FMO Echo 服务...")
+        self.logger.info("正在停止 FMO Repeater 服务...")
 
         # 断开 MQTT
         if self.mqtt_client:
@@ -373,7 +373,7 @@ class FMOEchoService:
             if self.message_buffer:
                 self.logger.info(f"服务停止时缓存中还有 {len(self.message_buffer)} 个未重放的消息")
 
-        self.logger.info("FMO Echo 服务已停止")
+        self.logger.info("FMO Repeater 服务已停止")
 
 
 def main():
@@ -391,7 +391,7 @@ def main():
         sys.exit(1)
 
     # 创建并启动服务
-    service = FMOEchoService(config)
+    service = FMORepeaterService(config)
 
     try:
         # 连接 MQTT

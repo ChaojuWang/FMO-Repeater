@@ -10,7 +10,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import load_config, validate_config
-from fmo_echo_service import FMOEchoService
+from fmo_repeater_service import FMORepeaterService
 from fmo_header import FMORawHeader, replace_header_in_stream
 from paho.mqtt import client as mqtt_client
 import paho.mqtt.enums
@@ -81,8 +81,8 @@ print()
 
 service = None
 try:
-    service = FMOEchoService(config)
-    test("服务实例创建成功", True, "FMOEchoService 已初始化")
+    service = FMORepeaterService(config)
+    test("服务实例创建成功", True, "FMORepeaterService 已初始化")
 
     # 连接 MQTT
     service.connect()

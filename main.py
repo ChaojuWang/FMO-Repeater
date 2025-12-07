@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FMO Echo 服务主入口
+FMO Repeater 服务主入口
 
 提供命令行接口，支持：
 - 前台运行服务
@@ -14,13 +14,13 @@ import argparse
 import time
 
 from config import load_config, validate_config, save_default_config
-from fmo_echo_service import FMOEchoService
+from fmo_repeater_service import FMORepeaterService
 from daemon import Daemon
 
 
 def run_service(config_file: str = 'config.yaml'):
     """
-    运行 FMO Echo 服务（前台模式）
+    运行 FMO Repeater 服务（前台模式）
 
     Args:
         config_file: 配置文件路径
@@ -34,7 +34,7 @@ def run_service(config_file: str = 'config.yaml'):
         sys.exit(1)
 
     # 创建并启动服务
-    service = FMOEchoService(config)
+    service = FMORepeaterService(config)
 
     try:
         # 连接 MQTT
@@ -65,7 +65,7 @@ def main():
     主函数：解析命令行参数并执行相应操作
     """
     parser = argparse.ArgumentParser(
-        description='FMO Echo 服务 - 基于 MQTT 的 FMO 消息回显服务',
+        description='FMO Repeater 服务 - 基于 MQTT 的 FMO 系统管理和工具服务',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
@@ -119,8 +119,8 @@ def main():
 
     parser.add_argument(
         '--pid-file',
-        default='/tmp/fmo_echo.pid',
-        help='PID 文件路径（守护进程模式，默认: /tmp/fmo_echo.pid）'
+        default='/var/run/fmo_repeater.pid',
+        help='PID 文件路径（守护进程模式，默认: /var/run/fmo_repeater.pid）'
     )
 
     args = parser.parse_args()
@@ -147,25 +147,25 @@ def main():
     if args.action == 'start':
         if args.daemon:
             # 守护进程模式
-            print(f"以守护进程模式启动 FMO Echo 服务...")
+            print(f"以守护进程模式启动 FMO Repeater 服务...")
             print(f"PID 文件: {args.pid_file}")
             print(f"配置文件: {args.config}")
             print(f"日志位置: 请查看配置文件中的 logging.file 设置")
             daemon.start(run_service, args.config)
         else:
             # 前台模式
-            print(f"启动 FMO Echo 服务（前台模式）...")
+            print(f"启动 FMO Repeater 服务（前台模式）...")
             print(f"配置文件: {args.config}")
             print(f"按 Ctrl+C 停止服务")
             print()
             run_service(args.config)
 
     elif args.action == 'stop':
-        print(f"停止 FMO Echo 服务...")
+        print(f"停止 FMO Repeater 服务...")
         daemon.stop()
 
     elif args.action == 'restart':
-        print(f"重启 FMO Echo 服务...")
+        print(f"重启 FMO Repeater 服务...")
         daemon.restart(run_service, args.config)
 
     elif args.action == 'status':

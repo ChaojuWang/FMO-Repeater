@@ -4,13 +4,18 @@
 
 ## 项目概述
 
-**FMO Echo 服务** - 基于 MQTT 的 FM Over Online (FMO) 系统中继服务器项目。
+**FMO Repeater** - 基于 MQTT 的 FM Over Internet (FMO) 系统管理和工具服务。
 
-FMO（FM Over Online，在线调频中继）是一种通过网络中继 FM 信号的设备，用于业余无线电通过网络基础设施进行通信。本项目实现了一个完整的 MQTT 中继服务器，能够接收 FMO 消息，修改头部后重新发送，实现"鹦鹉海螺 echo 服务"功能。
+FMO（FM Over Internet） FM 信号的设备，用于业余无线电通过网络基础设施进行通信。本项目为 FMO 中继器提供完整的管理和工具服务，包括但不限于：
+- **回音海螺（Echo）服务**：接收 FMO 消息，修改头部后重新发送，实现回声测试功能
+- **消息管理和转发**：智能消息路由和转发功能
+- **中继器状态监控**：实时监控和管理 FMO 中继器网络
+- **配置和日志管理**：统一的服务配置管理和日志记录系统
 
 **项目状态**：
-- `demo.py`：概念验证脚本，演示基本的头部修改和发布功能
-- 正式服务：完整的生产级 Echo 服务，支持配置文件、日志、守护进程
+- 完整的生产级 Repeater 服务，支持配置文件、日志、守护进程
+- 模块化设计，易于扩展新的管理功能
+- 完整的测试套件，确保服务稳定可靠
 
 ## 常用命令
 
@@ -106,23 +111,24 @@ python tests/test_integration.py
 - `validate_config()`: 验证配置的完整性和合理性
 - `save_default_config()`: 生成默认配置文件模板
 
-#### 3. fmo_echo_service.py - 核心服务模块
-`FMOEchoService` 类实现完整的 Echo 服务：
+#### 3. fmo_repeater_service.py - 核心服务模块
+`FMORepeaterService` 类实现完整的中继器管理服务：
 - **MQTT 连接管理**：
   - `connect()`: 连接 MQTT 代理并订阅主题
   - `_on_connect()`: 连接成功回调
   - `_on_message()`: 消息接收回调
-- **消息缓存和超时检测**：
+- **消息处理和缓存**：
   - `message_buffer`: 线程安全的消息缓存列表
   - `_check_timeout()`: 周期性检查是否超时
-  - 超时时间可配置（默认 5 秒）
-- **消息重放**：
+  - 超时时间可配置（默认 2.0 秒）
+- **Echo 服务功能**：
   - `_replay_messages()`: 修改头部并重新发布所有缓存消息
   - 自动添加呼号前缀（如 "RE>BD8BOJ"）
+  - 支持可配置的回声延迟和重放策略
 - **日志系统**：
   - 支持控制台和文件输出
   - 日志轮转（默认 10MB，保留 5 个备份）
-  - 可配置日志级别
+  - 可配置日志级别和格式
 
 #### 4. daemon.py - 守护进程模块
 `Daemon` 类实现 Unix 守护进程功能：
@@ -142,7 +148,9 @@ python tests/test_integration.py
 使用 YAML 格式，包含：
 - MQTT 连接配置（broker, port, 认证信息）
 - 主题配置（订阅和发布主题）
-- Echo 配置（超时时间，UID，呼号前缀）
+- Repeater 服务配置
+  - echo 子配置：Echo 功能的超时时间、UID、呼号前缀等
+  - 其他 Repeater 功能配置（扩展预留）
 - 日志配置（级别，输出方式，轮转策略）
 - 守护进程配置（PID 文件路径）
 
@@ -242,14 +250,14 @@ python tests/test_integration.py
 ## 文件结构
 
 ```
-fmo_echo/
-├── demo.py                    # 概念验证演示脚本
+fmo_repeater/
 ├── fmo_header.py             # 头部处理模块
 ├── config.py                  # 配置管理模块
-├── fmo_echo_service.py       # Echo 服务主模块
+├── fmo_repeater_service.py   # Repeater 服务主模块（包含 Echo 功能）
 ├── daemon.py                  # 守护进程模块
 ├── main.py                    # 主入口脚本
 ├── config.yaml               # 配置文件
+├── config.yaml.example       # 配置文件示例
 ├── requirements.txt          # 依赖清单
 ├── tests/                     # 测试套件
 │   ├── README.md             # 测试说明文档
@@ -260,7 +268,8 @@ fmo_echo/
 │   ├── test_message_flow.py  # 消息流程测试
 │   └── test_integration.py   # 集成测试
 ├── logs/                      # 日志目录（运行时创建）
-└── CLAUDE.md                 # 项目文档
+├── CLAUDE.md                 # 项目文档
+└── README.md                 # 项目说明文档
 ```
 
 ## 开发和调试
@@ -310,10 +319,10 @@ python config.py --generate config_test.yaml
 ### 查看日志
 ```bash
 # 实时查看日志
-tail -f logs/fmo_echo.log
+tail -f logs/fmo_repeater.log
 
 # 查看最近的错误
-grep ERROR logs/fmo_echo.log
+grep ERROR logs/fmo_repeater.log
 ```
 
 ## 重要说明

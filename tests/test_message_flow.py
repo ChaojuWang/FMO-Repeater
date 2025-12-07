@@ -10,7 +10,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fmo_header import FMORawHeader, replace_header_in_stream
-from fmo_echo_service import FMOEchoService
+from fmo_repeater_service import FMORepeaterService
 import base64
 import time
 import threading
@@ -53,7 +53,7 @@ try:
             'port': 1883,
             'username': '',
             'password': '',
-            'client_id_prefix': 'test_fmo_echo',
+            'client_id_prefix': 'test_fmo_repeater',
             'keepalive': 60
         },
         'topics': {
@@ -74,7 +74,7 @@ try:
         }
     }
 
-    service = FMOEchoService(test_config)
+    service = FMORepeaterService(test_config)
 
     test(
         "服务初始化成功",
