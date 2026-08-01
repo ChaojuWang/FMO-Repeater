@@ -47,6 +47,7 @@ class FMORepeaterService:
 
         # 消息缓存
         self.message_buffer: List[bytes] = []
+        self.message_receive_times: List[float] = []
         self.last_message_time = None
         self.buffer_lock = threading.Lock()  # 线程安全锁
 
@@ -191,6 +192,7 @@ class FMORepeaterService:
             # 线程安全地添加消息到缓存
             with self.buffer_lock:
                 self.message_buffer.append(msg.payload)
+                self.message_receive_times.append(time.monotonic())
                 self.last_message_time = time.time()
 
             self.logger.debug(
@@ -252,6 +254,9 @@ class FMORepeaterService:
 
         如果自上次消息后超过配置的超时时间，且缓存中有消息，则触发重放。
         """
+        replay_buffer = None
+        replay_receive_times = None
+
         with self.buffer_lock:
             # 如果从未收到消息，直接返回
             if self.last_message_time is None:
@@ -260,18 +265,24 @@ class FMORepeaterService:
             # 检查是否超时
             elapsed = time.time() - self.last_message_time
             if elapsed > self.config['echo']['timeout']:
-                # 只有在缓存不为空时才重放
                 if self.message_buffer:
-                    self.logger.info(
-                        f"检测到超时（{elapsed:.2f}秒），开始重放 {len(self.message_buffer)} 个消息"
-                    )
-                    self._replay_messages()
+                    # 先移出完整语音并释放锁，避免按真实时长回放期间
+                    # 阻塞 MQTT 接收线程缓存后续消息。
+                    replay_buffer = self.message_buffer
+                    replay_receive_times = self.message_receive_times
 
                 # 重置状态
                 self.message_buffer = []
+                self.message_receive_times = []
                 self.last_message_time = None
 
-    def _replay_messages(self):
+        if replay_buffer:
+            self.logger.info(
+                f"检测到超时（{elapsed:.2f}秒），开始重放 {len(replay_buffer)} 个消息"
+            )
+            self._replay_messages(replay_buffer, replay_receive_times)
+
+    def _replay_messages(self, messages=None, receive_times=None):
         """
         重放缓存中的所有消息
 
@@ -283,9 +294,20 @@ class FMORepeaterService:
         success_count = 0
         fail_count = 0
         publish_topic = self.config['topics']['publish']
+        messages = self.message_buffer if messages is None else messages
+        receive_times = [] if receive_times is None else receive_times
+        replay_started_at = time.monotonic()
 
-        for i, msg_data in enumerate(self.message_buffer, 1):
+        for i, msg_data in enumerate(messages, 1):
             try:
+                # 按帧在原始接收时间轴上的位置发送。使用绝对截止时间，
+                # 避免逐帧休眠和处理耗时不断累积形成时间漂移。
+                if i > 1 and len(receive_times) >= i:
+                    target_elapsed = receive_times[i - 1] - receive_times[0]
+                    delay = replay_started_at + target_elapsed - time.monotonic()
+                    if delay > 0:
+                        time.sleep(delay)
+
                 # 解析原始头部
                 original_header = FMORawHeader.from_bytes(msg_data)
 
@@ -305,7 +327,7 @@ class FMORepeaterService:
                 if result.rc == mqtt_client.MQTT_ERR_SUCCESS:
                     success_count += 1
                     self.logger.debug(
-                        f"重放消息 [{i}/{len(self.message_buffer)}] - "
+                        f"重放消息 [{i}/{len(messages)}] - "
                         f"原始: UID={original_header.uid}, 呼号='{original_header.callsign}' -> "
                         f"修改后: UID={self.config['echo']['uid']}, 呼号='{new_callsign}'"
                     )
@@ -318,7 +340,7 @@ class FMORepeaterService:
                 self.logger.error(f"重放消息 [{i}] 时出错: {e}", exc_info=True)
 
         self.logger.info(
-            f"重放完成 - 成功: {success_count}, 失败: {fail_count}, 总计: {len(self.message_buffer)}"
+            f"重放完成 - 成功: {success_count}, 失败: {fail_count}, 总计: {len(messages)}"
         )
 
     def run(self):
