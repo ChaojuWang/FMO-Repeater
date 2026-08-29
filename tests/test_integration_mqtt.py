@@ -181,7 +181,7 @@ class TestEchoEndToEnd:
         probe.subscribe(TOPIC, qos=1)
         time.sleep(0.5)
 
-        packet = make_packet(uid=4321, callsign="BD8BOJ", vendor=0x1111,
+        packet = make_packet(uid=4321, callsign="FMOTEST", vendor=0x1111,
                              n_frames=2)
         orig = PacketParser.parse(packet)
         info = probe.publish(TOPIC, packet, qos=1)
@@ -199,7 +199,7 @@ class TestEchoEndToEnd:
 
         new = PacketParser.parse(echoes[0])
         assert new.header.vendor == 0x2000
-        assert new.header.callsign == "RE>BD8BOJ"
+        assert new.header.callsign == "RE>FMOTEST"
         assert new.header.uid == 65535                       # 重放 UID（D8）
         assert new.header.stream_begin_utc != orig.header.stream_begin_utc  # 回放更新 sbu
         assert new.frames == orig.frames                  # 帧区逐字节一致（CRC 仍有效）

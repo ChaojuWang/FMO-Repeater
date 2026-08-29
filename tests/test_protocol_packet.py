@@ -61,10 +61,10 @@ class TestVendorFrame:
 
 class TestParser:
     def test_parse_valid(self, make_packet):
-        packet = make_packet(uid=42, callsign="BD8BOJ", n_frames=2)
+        packet = make_packet(uid=42, callsign="FMOTEST", n_frames=2)
         parsed = PacketParser.parse(packet)
         assert parsed.header.uid == 42
-        assert parsed.header.callsign == "BD8BOJ"
+        assert parsed.header.callsign == "FMOTEST"
         assert parsed.header.frame_num == 2
         assert len(parsed.frames) == 2
         assert [tf.index for tf in parsed.frames] == [1, 2]
@@ -222,7 +222,7 @@ class TestBuilderAggregation:
 class TestRoundtrip:
     def test_multi_packet_roundtrip(self):
         enc = RadpcmEncoder(frame_index_start=0)
-        builder = PacketBuilder(vendor=0x2001, uid=77, callsign="BG5ESN", srv_uid=5)
+        builder = PacketBuilder(vendor=0x2001, uid=77, callsign="FMOTEST", srv_uid=5)
         original_frames = []
         packets = []
         for i in range(8):

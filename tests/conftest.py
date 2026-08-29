@@ -49,12 +49,12 @@ def radpcm_frames():
 def make_packet():
     """合成完整消息包的工厂
 
-    用法: make_packet(uid=42, callsign="BD8BOJ", vendor=0x1111, codec=COMPRESS_RADPCM, n_frames=2)
+    用法: make_packet(uid=42, callsign="FMOTEST", vendor=0x1111, codec=COMPRESS_RADPCM, n_frames=2)
     返回 bytes（单个消息包，帧数 ≤ 聚合上限时为一包）。
     """
     def _make(
         uid: int = 42,
-        callsign: str = "BD8BOJ",
+        callsign: str = "FMOTEST",
         vendor: int = 0x1111,
         codec: int = COMPRESS_RADPCM,
         n_frames: int = 1,
@@ -101,7 +101,8 @@ def service_config(tmp_path):
         },
         'topics': {'subscribe': 'TEST/FMO/RAW', 'publish': 'TEST/FMO/RAW'},
         'echo': {
-            'timeout': 2.0, 'vendor': 0x2000, 'uid': 65535,
+            'timeout': 2.0, 'max_duration': 30.0,
+            'vendor': 0x2000, 'uid': 65535,
             'callsign_prefix': 'RE>',
         },
         'event_log': {

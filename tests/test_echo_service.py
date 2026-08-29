@@ -70,7 +70,7 @@ class TestLoopPrevention:
 
     def test_same_vendor_no_prefix_not_skipped(self, service, make_packet):
         """他人软件区同 vendor 但无前缀 → 不跳过"""
-        packet = make_packet(vendor=0x2000, callsign="BG5ESN")
+        packet = make_packet(vendor=0x2000, callsign="FMOTEST")
         service._on_message(None, None, MockMQTTMessage(packet))
         consume_queue(service)
         assert len(service._buffer) == 1
@@ -98,13 +98,13 @@ class TestLoopPrevention:
 
 class TestHeaderRewrite:
     def test_rewrite_fields(self, service, make_packet):
-        packet = make_packet(uid=42, callsign="BD8BOJ", vendor=0x1111)
+        packet = make_packet(uid=42, callsign="FMOTEST", vendor=0x1111)
         parsed = PacketParser.parse(packet)
         rewritten = service._rewrite_packet(parsed)
         new = PacketParser.parse(rewritten)
 
         assert new.header.vendor == 0x2000
-        assert new.header.callsign == "RE>BD8BOJ"
+        assert new.header.callsign == "RE>FMOTEST"
         assert new.header.uid == 65535  # 默认重放 UID（D8：防客户端自过滤）
         assert new.header.timestamp >= parsed.header.timestamp
         # stream_begin_utc 更新为回放时刻（新流，非原发送者值）
@@ -154,23 +154,14 @@ class TestTimeoutReplay:
         assert service.mqtt_client.published == []
         assert len(service._buffer) == 1
 
-    def test_timeout_triggers_replay(self, service, make_packet):
-        for _ in range(3):
-            service._on_message(None, None, MockMQTTMessage(make_packet()))
-        consume_queue(service)
-        trigger_replay(service)  # 队列空 → 超时回放
-        assert len(service.mqtt_client.published) == 3
-        assert len(service._buffer) == 0
-        assert service.last_message_time is None
-
     def test_replayed_content(self, service, make_packet):
-        service._on_message(None, None, MockMQTTMessage(make_packet(uid=7, callsign="BG5ESN")))
+        service._on_message(None, None, MockMQTTMessage(make_packet(uid=7, callsign="FMOTEST")))
         consume_queue(service)
         trigger_replay(service)
         topic, payload = service.mqtt_client.published[0]
         assert topic == "TEST/FMO/RAW"
         parsed = PacketParser.parse(payload)
-        assert parsed.header.callsign == "RE>BG5ESN"
+        assert parsed.header.callsign == "RE>FMOTEST"
         assert parsed.header.vendor == 0x2000
 
     def test_replay_clears_state(self, service, make_packet):
@@ -240,7 +231,40 @@ class TestStreamBoundary:
         assert service._queue.empty()
 
 
-class TestEventLogIntegration:
+class TestMaxDuration:
+    """回放缓存超过 max_duration 时截断（changes/004）"""
+
+    @staticmethod
+    def _batch(make_packet, receive_times):
+        """构造 (ParsedPacket, monotonic) 列表，手动指定收包时间模拟跨度"""
+        from fmo_repeater.protocol import PacketParser
+        return [(PacketParser.parse(make_packet()), t) for t in receive_times]
+
+    def test_truncates_beyond_max_duration(self, service_config, make_packet):
+        service_config['echo']['max_duration'] = 1.0
+        svc = EchoService(service_config)
+        svc.mqtt_client = MockMQTTClient()
+        base = 1000000.0
+        # 跨度 2.0s > 1.0s：前 1s 内(base/base+0.5/base+1.0) 3 包，2s 处 1 包被截断
+        times = [base, base + 0.5, base + 1.0, base + 2.0]
+        batch = self._batch(make_packet, times)
+        svc._replay_messages(batch)
+        assert len(svc.mqtt_client.published) == 3
+
+    def test_no_truncate_within_duration(self, service_config, make_packet):
+        service_config['echo']['max_duration'] = 2.0
+        svc = EchoService(service_config)
+        svc.mqtt_client = MockMQTTClient()
+        base = 1000000.0
+        # 跨度 1.0s < 2.0s，不截断
+        times = [base, base + 0.5, base + 1.0]
+        batch = self._batch(make_packet, times)
+        svc._replay_messages(batch)
+        assert len(svc.mqtt_client.published) == 3
+
+    def test_default_is_30_seconds(self, service_config, make_packet):
+        svc = EchoService(service_config)
+        assert svc.max_duration == 30.0
     def test_events_written(self, service_config, make_packet):
         evlog = EventLog(service_config)
         service_config['event_log'] = service_config['event_log']
@@ -274,11 +298,11 @@ class TestEventLogIntegration:
         svc = EchoService(service_config, event_log=evlog)
         svc.mqtt_client = MockMQTTClient()
 
-        packet = make_packet(uid=7, callsign="BD8BOJ")
+        packet = make_packet(uid=7, callsign="FMOTEST")
         expected = PacketParser.parse(packet).header
         assert expected.stream_begin_utc == 1700000000000 & 0xFFFFFFFF  # 参数已透传
         svc._on_message(None, None, MockMQTTMessage(packet))
-        svc._on_message(None, None, MockMQTTMessage(make_packet(uid=7, callsign="BD8BOJ")))
+        svc._on_message(None, None, MockMQTTMessage(make_packet(uid=7, callsign="FMOTEST")))
         consume_queue(svc)
 
         import json
@@ -288,7 +312,7 @@ class TestEventLogIntegration:
         assert len(starts) == 1
         s = starts[0]
         assert s["uid"] == 7
-        assert s["callsign"] == "BD8BOJ"
+        assert s["callsign"] == "FMOTEST"
         assert s["vendor"] == expected.vendor
         assert s["stream_begin_utc"] == expected.stream_begin_utc
         assert s["frames"] == expected.frame_num

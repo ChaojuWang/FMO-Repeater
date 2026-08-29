@@ -31,6 +31,7 @@ class TestDefaultConfig:
         assert DEFAULT_CONFIG['echo']['vendor'] == 0x2000
         assert DEFAULT_CONFIG['echo']['uid'] == 65535
         assert DEFAULT_CONFIG['echo']['callsign_prefix'] == 'RE>'
+        assert DEFAULT_CONFIG['echo']['max_duration'] == 30.0
         assert DEFAULT_CONFIG['event_log']['enabled'] is True
 
     def test_default_config_valid(self):
@@ -100,6 +101,13 @@ class TestValidateConfig:
         cfg['echo']['timeout'] = -1
         with pytest.raises(ValueError, match="超时"):
             validate_config(cfg)
+
+    def test_bad_max_duration(self):
+        for v in (-1, 0):
+            cfg = self._base()
+            cfg['echo']['max_duration'] = v
+            with pytest.raises(ValueError, match="max_duration"):
+                validate_config(cfg)
 
     def test_empty_topics(self):
         cfg = self._base()
