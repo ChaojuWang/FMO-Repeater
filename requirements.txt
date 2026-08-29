@@ -1,10 +1,15 @@
-# FMO Echo 服务依赖项
+# FMO Repeater 依赖项
 #
 # 安装方法:
 #   pip install -r requirements.txt
+#   # 开发/测试（含 pytest）:
+#   pip install -r requirements-dev.txt
 
 # MQTT 客户端库
 paho-mqtt>=1.6.0
 
 # YAML 配置文件解析
 PyYAML>=6.0
+
+# OPUS 编解码（绑定系统 libopus；缺失时 OPUS 功能自动降级，RADPCM/协议/Echo 不受影响）
+opuslib>=3.0

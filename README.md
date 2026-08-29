@@ -2,314 +2,106 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
 
-FMO Repeater 是一个基于 MQTT 的 FM Over Internet (FMO) 系统管理和工具服务，为业余无线电网络中继提供完整的管理解决方案。
+FMO Repeater 是一个基于 MQTT 的 FM Over Internet (FMO) 系统管理和工具服务，
+对齐 [FMO 语音数据开放协议 v1](https://bg5esn.com/docs/fmo-voice-codec-spec/)。
 
 ## 📖 项目简介
 
-FMO（FM Over Internet）是一种通过网络中继 FM 信号的设备，允许业余无线电爱好者通过互联网进行远程通信。FMO Repeater 为这些中继器提供了一套完整的管理和工具服务，包括：
+FMO（FM Over Internet）是通过互联网中继 FM 信号的设备。本项目为 FMO 网络提供
+中继器管理与工具服务，当前核心功能：
 
-### 🎯 核心功能
+- **回音海螺（Echo）服务**：接收 FMO 语音消息包，重写头部（vendor/呼号前缀）后
+  按原始时间轴重放，实现回声测试
+- **完整协议栈**：64B 消息头 / 传输帧 / 编码语音帧解析与构造，CRC32 校验，
+  MTU 1400B + 250ms 聚合规则
+- **语音编解码**：RADPCM（IMA ADPCM，纯 Python 完整实现）与 OPUS（libopus）
+- **结构化事件日志**：JSONL 格式，独立于运行日志
+- **可扩展架构**：protocol / codecs / service 三层分包
 
-- **回音海螺（Echo）服务**：接收 FMO 消息，修改头部后重新发送，实现回声测试功能
-- **消息管理和转发**：智能消息路由和转发功能
-- **中继器状态监控**：实时监控和管理 FMO 中继器网络
-- **配置和日志管理**：统一的服务配置管理和日志记录系统
-
-### 🚀 特性
-
-- 🐍 **Python 驱动**：纯 Python 实现，跨平台兼容
-- 📡 **MQTT 支持**：基于标准 MQTT 协议的可靠消息传输
-- 🔧 **配置灵活**：YAML 配置文件，支持环境变量覆盖
-- 📝 **日志完善**：多级别日志系统，支持文件轮转
-- 🛡️ **守护进程**：支持后台守护进程模式（Unix/Linux）
-- 🧪 **测试覆盖**：完整的测试套件，确保服务稳定可靠
-
-## 🛠️ 快速开始
+## 🚀 快速开始
 
 ### 环境要求
 
-- Python 3.8 或更高版本
-- MQTT 代理服务器（如 EMQX、Mosquitto 等）
-- pip 包管理器
+- Python 3.8+
+- MQTT 代理服务器（EMQX、Mosquitto 等）
+- （可选）系统 libopus——启用 OPUS 编解码测试
 
-### 安装步骤
-
-1. **克隆仓库**
-   ```bash
-   git clone https://github.com/ChaojuWang/FMO-Repeater.git
-   cd FMO-Repeater
-   ```
-
-2. **安装依赖**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **配置服务**
-   ```bash
-   # 复制配置文件模板
-   cp config.yaml.example config.yaml
-
-   # 编辑配置文件
-   vim config.yaml
-   ```
-
-4. **启动服务**
-   ```bash
-   # 前台模式（推荐用于测试）
-   python main.py start
-
-   # 后台守护进程模式（Unix/Linux）
-   python main.py start --daemon
-   ```
-
-### 配置说明
-
-主要配置项位于 `config.yaml` 文件中：
-
-```yaml
-mqtt:
-  broker: "your-mqtt-broker.com"  # MQTT 代理地址
-  port: 1883                       # MQTT 端口
-  username: "your_username"        # 用户名
-  password: "your_password"        # 密码
-
-topics:
-  subscribe: "FMO/RAW"  # 订阅的主题
-  publish: "FMO/RAW"    # 发布的主题
-
-repeater:
-  echo:
-    timeout: 2.0              # Echo 超时时间（秒）
-    uid: 65535                # Echo 时使用的固定 UID
-    callsign_prefix: "RE>"    # 呼号前缀
-
-logging:
-  level: "INFO"               # 日志级别
-  console: true               # 控制台输出
-  file: "logs/fmo_repeater.log"  # 日志文件路径
-```
-
-## 📖 使用文档
-
-### 命令行工具
+### 安装
 
 ```bash
-# 启动服务
-python main.py start
+git clone https://github.com/ChaojuWang/FMO-Repeater.git
+cd FMO-Repeater
+pip install -r requirements.txt
 
-# 使用自定义配置文件
-python main.py start --config /path/to/config.yaml
-
-# 后台模式
-python main.py start --daemon
-
-# 停止服务
-python main.py stop
-
-# 重启服务
-python main.py restart
-
-# 查看服务状态
-python main.py status
-
-# 生成配置文件模板
-python main.py --generate-config config.yaml
+# 配置
+cp config.yaml.example config.yaml
+vim config.yaml
 ```
 
-### Echo 服务工作流程
+### 运行
 
-1. **接收消息**：订阅指定 MQTT 主题，接收 FMO 消息
-2. **缓存管理**：将消息存入缓存，启动超时计时器
-3. **超时处理**：在配置的超时时间内没有新消息时，触发 Echo 功能
-4. **头部重写**：修改消息头部（UID 设为 65535，添加呼号前缀）
-5. **重新发送**：将修改后的消息发布到相同主题
-6. **循环防护**：通过 UID 检查避免无限循环重放
+```bash
+python main.py start                    # 前台模式
+python main.py start --config my.yaml   # 自定义配置
+python main.py start --daemon           # 后台守护进程
+python main.py stop | restart | status  # 守护进程管理
+python main.py --generate-config out.yaml  # 生成配置模板
+```
 
 ## 🧪 测试
 
-### 运行所有测试
-
 ```bash
-python tests/run_all_tests.py
+./run_tests.sh                          # 一键运行（pytest）
+./run_tests.sh tests/test_codec_radpcm.py -q  # 指定文件/参数
 ```
 
-### 运行特定测试
+覆盖：协议头/帧/组包拆包（CRC、聚合上限）、vendor 区间、RADPCM 编解码
+（SNR、丢包恢复、旧格式兼容）、OPUS（缺依赖自动 skip）、Echo 防循环矩阵、
+配置校验、JSONL 事件日志。117 个用例。
 
-```bash
-# 头部处理测试
-python tests/test_header.py
+## ⚙️ 配置要点
 
-# 配置管理测试
-python tests/test_config.py
+```yaml
+echo:
+  timeout: 5.0         # 流结束超时（秒）
+  vendor: 0x2000       # 重放 vendor：软件区 0x2000-0x2FFF 自由取用
+                       # 严禁保留区 0x0000-0x0FFF；正式区 0x3000+ 需登记
+  uid: 0               # 重放 UID（0 = 保持原值）
+  callsign_prefix: 'RE>'
 
-# UID 过滤测试
-python tests/test_uid_filter.py
-
-# 消息流程测试
-python tests/test_message_flow.py
-
-# 集成测试（需要 MQTT 服务器）
-python tests/test_integration.py
+event_log:             # JSONL 结构化事件日志
+  enabled: true
+  file: logs/events.jsonl
 ```
 
-测试覆盖范围：
-- ✅ 头部解析、序列化、修改（19 个测试）
-- ✅ 配置加载、合并、验证（20 个测试）
-- ✅ UID 过滤机制（防止重放循环）
-- ✅ 消息缓存、超时检测、重放（20 个测试）
-- ✅ 线程安全测试
+**防循环机制**：重放包携带本服务 vendor + 呼号前缀；接收侧据此跳过自己的
+回声（`vendor` 匹配且呼号以 `RE>` 开头，或 UID 匹配），不会无限转发。
 
-## 🏗️ 项目架构
+## 🏗️ 架构
 
 ```
 fmo_repeater/
-├── fmo_header.py             # FMO 数据包头部的解析和修改
-├── config.py                  # 配置文件管理和验证
-├── fmo_repeater_service.py   # Repeater 服务主模块（包含 Echo 功能）
-├── daemon.py                  # Unix 守护进程支持
-├── main.py                    # 主入口和命令行接口
-├── config.yaml               # 配置文件（不提交到版本控制）
-├── config.yaml.example       # 配置文件示例
-├── requirements.txt          # Python 依赖列表
-├── tests/                     # 测试套件
-│   ├── README.md             # 测试文档
-│   ├── run_all_tests.py      # 测试运行器
-│   ├── test_header.py        # 头部处理测试
-│   ├── test_config.py        # 配置管理测试
-│   ├── test_uid_filter.py    # UID 过滤测试
-│   ├── test_message_flow.py  # 消息流程测试
-│   └── test_integration.py   # 集成测试
-├── logs/                      # 日志目录（运行时创建）
-├── CLAUDE.md                 # Claude Code 工作指导
-└── README.md                 # 本文档
+├── protocol/          # 协议层：vendor / header(64B) / frame / packet(组包拆包/CRC/聚合)
+├── codecs/            # 编解码：radpcm(IMA ADPCM) / opus_codec(可选)
+└── service/           # 服务：config / echo / event_log(JSONL) / logging_setup / daemon
 ```
 
-## 🔧 开发指南
-
-### 开发环境设置
-
-1. **创建虚拟环境**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # Linux/Mac
-   # 或 venv\Scripts\activate  # Windows
-   ```
-
-2. **安装开发依赖**
-   ```bash
-   pip install -r requirements.txt
-   pip install pytest pytest-cov  # 开发工具
-   ```
-
-3. **运行测试**
-   ```bash
-   python -m pytest tests/ -v
-   ```
-
-### 代码规范
-
-- 使用 Black 进行代码格式化
-- 使用 Flake8 进行代码检查
-- 所有函数和类都有详细的中文文档字符串
-
-### 添加新功能
-
-1. 在 `fmo_repeater_service.py` 中添加新功能
-2. 在 `config.py` 中添加相应的配置项
-3. 编写单元测试
-4. 更新文档
-
-## 📊 监控和日志
-
-### 日志查看
-
-```bash
-# 实时查看日志
-tail -f logs/fmo_repeater.log
-
-# 查看最近的错误
-grep ERROR logs/fmo_repeater.log
-```
-
-### 日志级别
-
-- **DEBUG**：详细的调试信息
-- **INFO**：一般信息（默认）
-- **WARNING**：警告信息
-- **ERROR**：错误信息
-- **CRITICAL**：严重错误
+详细设计见 [docs/design/](docs/design/)（SDD 流程见
+[docs/DESIGN_PROCESS.md](docs/DESIGN_PROCESS.md)，增量变更见
+[docs/changes/](docs/changes/)）。
 
 ## 🔒 安全考虑
 
-- MQTT 连接支持 TLS 加密
-- 敏感信息通过环境变量传递
-- UID 过滤机制防止重放攻击
-- 线程安全的消息处理
-
-## 🌐 部署
-
-### Docker 部署
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-
-COPY . .
-EXPOSE 1883
-
-CMD ["python", "main.py", "start"]
-```
-
-### systemd 服务
-
-创建 `/etc/systemd/system/fmo-repeater.service`：
-
-```ini
-[Unit]
-Description=FMO Repeater Service
-After=network.target
-
-[Service]
-Type=simple
-User=fmo
-WorkingDirectory=/opt/fmo-repeater
-ExecStart=/opt/fmo-repeater/venv/bin/python main.py start
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-## 🤝 贡献指南
-
-1. Fork 项目
-2. 创建功能分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 打开 Pull Request
+- 生产环境建议 MQTT TLS 与凭据管理（当前配置文件明文，勿提交 config.yaml）
+- 事件日志含呼号/UID 等通联元数据，注意磁盘与隐私管理
 
 ## 📄 许可证
 
-本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
+MIT License，见 [LICENSE](LICENSE)。
 
 ## 🙏 致谢
 
-- [FMO作者 BG5ESN](https://bg5esn.com/)
-- [Paho MQTT Python](https://www.eclipse.org/paho/clients/python/) - MQTT 客户端库
-- [PyYAML](https://pyyaml.org/) - YAML 解析库
-
-## 📞 联系方式
-
-- 项目主页：https://github.com/your-username/fmo-repeater
-- 问题反馈：https://github.com/your-username/fmo-repeater/issues
-
----
-
-**FMO Repeater** - 让 FM Over Internet 中继更智能、更可靠！
+- [FMO 协议作者 BG5ESN](https://bg5esn.com/) 与 [协议规范](https://bg5esn.com/docs/fmo-voice-codec-spec/)
+- [Paho MQTT Python](https://www.eclipse.org/paho/clients/python/)
+- [PyYAML](https://pyyaml.org/) / [opuslib](https://github.com/Ensegrest/opuslib)

@@ -1,0 +1,7 @@
+# 开发/测试依赖
+#
+# 安装方法:
+#   pip install -r requirements.txt -r requirements-dev.txt
+
+# 测试框架
+pytest>=7.0

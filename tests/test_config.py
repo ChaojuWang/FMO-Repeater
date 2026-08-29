@@ -1,274 +1,148 @@
-#!/usr/bin/env python3
-"""
-配置管理测试
+"""配置管理测试"""
 
-测试配置加载、合并和验证功能
-"""
-
-import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import load_config, validate_config, deep_merge, DEFAULT_CONFIG
-import tempfile
+import pytest
 import yaml
 
-print("=" * 60)
-print("配置管理测试")
-print("=" * 60)
-print()
+from fmo_repeater.service.config import (
+    DEFAULT_CONFIG,
+    deep_merge,
+    load_config,
+    save_default_config,
+    validate_config,
+)
 
-test_count = 0
-pass_count = 0
 
-def test(name, condition, details=""):
-    """测试辅助函数"""
-    global test_count, pass_count
-    test_count += 1
-    if condition:
-        pass_count += 1
-        print(f"✅ 测试 {test_count}: {name}")
-        if details:
-            print(f"   {details}")
-    else:
-        print(f"❌ 测试 {test_count}: {name} - 失败")
-        if details:
-            print(f"   {details}")
-    print()
+class TestDeepMerge:
+    def test_nested_merge(self):
+        base = {"a": {"b": 1, "c": 2}, "d": 3}
+        override = {"a": {"b": 10}, "e": 4}
+        merged = deep_merge(base, override)
+        assert merged == {"a": {"b": 10, "c": 2}, "d": 3, "e": 4}
+        # 原字典不被修改
+        assert base == {"a": {"b": 1, "c": 2}, "d": 3}
 
-# ========== 测试 1: 默认配置 ==========
-print("--- 测试组 1: 默认配置 ---")
-print()
 
-try:
-    # 加载不存在的配置文件，应返回默认配置
-    config = load_config("nonexistent_config.yaml")
+class TestDefaultConfig:
+    def test_defaults_complete(self):
+        for section in ('mqtt', 'topics', 'echo', 'event_log', 'logging', 'daemon'):
+            assert section in DEFAULT_CONFIG
+        assert DEFAULT_CONFIG['echo']['vendor'] == 0x2000
+        assert DEFAULT_CONFIG['echo']['uid'] == 65535
+        assert DEFAULT_CONFIG['echo']['callsign_prefix'] == 'RE>'
+        assert DEFAULT_CONFIG['event_log']['enabled'] is True
 
-    test(
-        "默认配置加载成功",
-        config is not None,
-        f"配置节数量: {len(config)}"
-    )
+    def test_default_config_valid(self):
+        assert validate_config(DEFAULT_CONFIG) is True
 
-    test(
-        "包含 mqtt 配置节",
-        'mqtt' in config,
-        f"broker={config['mqtt']['broker']}"
-    )
 
-    test(
-        "包含 topics 配置节",
-        'topics' in config,
-        f"subscribe={config['topics']['subscribe']}"
-    )
+class TestLoadConfig:
+    def test_missing_file_uses_defaults(self, tmp_path):
+        config = load_config(str(tmp_path / "nonexistent.yaml"))
+        assert config == DEFAULT_CONFIG
 
-    test(
-        "包含 echo 配置节",
-        'echo' in config,
-        f"timeout={config['echo']['timeout']}, uid={config['echo']['uid']}"
-    )
+    def test_load_and_merge(self, tmp_path):
+        user_cfg = {"mqtt": {"broker": "mqtt.example.com", "port": 8883}}
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text(yaml.dump(user_cfg), encoding="utf-8")
+        config = load_config(str(cfg_file))
+        assert config['mqtt']['broker'] == 'mqtt.example.com'
+        assert config['mqtt']['port'] == 8883
+        # 未覆盖项保持默认
+        assert config['mqtt']['keepalive'] == 60
+        assert config['echo']['vendor'] == 0x2000
 
-    test(
-        "包含 logging 配置节",
-        'logging' in config,
-        f"level={config['logging']['level']}"
-    )
+    def test_empty_file_uses_defaults(self, tmp_path):
+        cfg_file = tmp_path / "empty.yaml"
+        cfg_file.write_text("", encoding="utf-8")
+        assert load_config(str(cfg_file)) == DEFAULT_CONFIG
 
-except Exception as e:
-    test("默认配置加载", False, f"异常: {e}")
+    def test_invalid_yaml_raises(self, tmp_path):
+        cfg_file = tmp_path / "bad.yaml"
+        cfg_file.write_text("mqtt: [unclosed", encoding="utf-8")
+        with pytest.raises(yaml.YAMLError):
+            load_config(str(cfg_file))
 
-# ========== 测试 2: 配置合并 ==========
-print("--- 测试组 2: 配置合并 ---")
-print()
 
-try:
-    base = {
-        'a': 1,
-        'b': {'c': 2, 'd': 3},
-        'e': 'base'
-    }
+class TestValidateConfig:
+    def _base(self):
+        import copy
+        return copy.deepcopy(DEFAULT_CONFIG)
 
-    override = {
-        'b': {'c': 99},  # 应该覆盖 c，保留 d
-        'e': 'override',  # 应该覆盖
-        'f': 'new'  # 应该添加
-    }
+    def test_missing_section(self):
+        cfg = self._base()
+        del cfg['echo']
+        with pytest.raises(ValueError, match="echo"):
+            validate_config(cfg)
 
-    merged = deep_merge(base, override)
+    def test_vendor_reserved_zone_rejected(self):
+        for vendor in (0x0000, 0x0FFF, 0x0500):
+            cfg = self._base()
+            cfg['echo']['vendor'] = vendor
+            with pytest.raises(ValueError, match="保留区"):
+                validate_config(cfg)
 
-    test(
-        "顶层字段正确覆盖",
-        merged['e'] == 'override',
-        f"期望: 'override', 实际: '{merged['e']}'"
-    )
+    def test_vendor_zones_accepted(self):
+        for vendor in (0x1000, 0x1FFF, 0x2000, 0x2FFF, 0x3000, 0xFFFFFFFF):
+            cfg = self._base()
+            cfg['echo']['vendor'] = vendor
+            assert validate_config(cfg) is True
 
-    test(
-        "嵌套字段正确覆盖",
-        merged['b']['c'] == 99,
-        f"期望: 99, 实际: {merged['b']['c']}"
-    )
+    def test_bad_mqtt_port(self):
+        cfg = self._base()
+        cfg['mqtt']['port'] = 70000
+        with pytest.raises(ValueError, match="port"):
+            validate_config(cfg)
 
-    test(
-        "嵌套字段正确保留",
-        merged['b']['d'] == 3,
-        f"期望: 3, 实际: {merged['b']['d']}"
-    )
+    def test_bad_timeout(self):
+        cfg = self._base()
+        cfg['echo']['timeout'] = -1
+        with pytest.raises(ValueError, match="超时"):
+            validate_config(cfg)
 
-    test(
-        "新字段正确添加",
-        merged['f'] == 'new',
-        f"期望: 'new', 实际: '{merged['f']}'"
-    )
+    def test_empty_topics(self):
+        cfg = self._base()
+        cfg['topics']['subscribe'] = ''
+        with pytest.raises(ValueError, match="订阅主题"):
+            validate_config(cfg)
 
-except Exception as e:
-    test("配置合并", False, f"异常: {e}")
+    def test_event_log_disabled_allows_empty_file(self):
+        cfg = self._base()
+        cfg['event_log']['enabled'] = False
+        cfg['event_log']['file'] = ''
+        assert validate_config(cfg) is True
 
-# ========== 测试 3: YAML 文件加载 ==========
-print("--- 测试组 3: YAML 文件加载 ---")
-print()
+    def test_event_log_enabled_requires_file(self):
+        cfg = self._base()
+        cfg['event_log']['file'] = ''
+        with pytest.raises(ValueError, match="event_log.file"):
+            validate_config(cfg)
 
-try:
-    # 创建临时配置文件
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-        temp_config = {
-            'mqtt': {
-                'broker': 'test.broker.com',
-                'port': 1234
-            },
-            'echo': {
-                'timeout': 10.0
-            }
-        }
-        yaml.dump(temp_config, f)
-        temp_file = f.name
+    def test_event_log_bad_max_bytes(self):
+        cfg = self._base()
+        cfg['event_log']['max_bytes'] = 0
+        with pytest.raises(ValueError, match="max_bytes"):
+            validate_config(cfg)
 
-    # 加载临时配置
-    config = load_config(temp_file)
+    def test_bad_log_level(self):
+        cfg = self._base()
+        cfg['logging']['level'] = 'VERBOSE'
+        with pytest.raises(ValueError, match="日志级别"):
+            validate_config(cfg)
 
-    test(
-        "YAML 文件加载成功",
-        config is not None,
-        f"配置文件: {temp_file}"
-    )
 
-    test(
-        "用户配置正确覆盖",
-        config['mqtt']['broker'] == 'test.broker.com',
-        f"broker={config['mqtt']['broker']}"
-    )
+class TestSaveDefaultConfig:
+    def test_save_and_reload(self, tmp_path):
+        target = tmp_path / "generated.yaml"
+        save_default_config(str(target))
+        assert target.exists()
+        loaded = yaml.safe_load(target.read_text(encoding="utf-8"))
+        assert loaded == DEFAULT_CONFIG
 
-    test(
-        "用户配置正确覆盖（数值）",
-        config['echo']['timeout'] == 10.0,
-        f"timeout={config['echo']['timeout']}"
-    )
 
-    test(
-        "默认配置正确保留",
-        config['mqtt']['username'] == '',
-        f"username='{config['mqtt']['username']}'"
-    )
-
-    # 清理临时文件
-    os.unlink(temp_file)
-
-except Exception as e:
-    test("YAML 文件加载", False, f"异常: {e}")
-    if 'temp_file' in locals():
-        try:
-            os.unlink(temp_file)
-        except:
-            pass
-
-# ========== 测试 4: 配置验证 ==========
-print("--- 测试组 4: 配置验证 ---")
-print()
-
-# 测试有效配置
-try:
-    valid_config = DEFAULT_CONFIG.copy()
-    result = validate_config(valid_config)
-    test(
-        "有效配置验证通过",
-        result == True,
-        "默认配置应该是有效的"
-    )
-except Exception as e:
-    test("有效配置验证", False, f"异常: {e}")
-
-# 测试缺少配置节
-try:
-    invalid_config = {'mqtt': {}}  # 缺少其他必需节
-    validate_config(invalid_config)
-    test("缺少配置节应抛出异常", False, "没有抛出预期的异常")
-except ValueError as e:
-    test("缺少配置节正确抛出异常", True, f"异常: {str(e)[:50]}...")
-except Exception as e:
-    test("缺少配置节检测", False, f"意外异常: {e}")
-
-# 测试 MQTT broker 为空
-try:
-    invalid_config = DEFAULT_CONFIG.copy()
-    invalid_config['mqtt']['broker'] = ''
-    validate_config(invalid_config)
-    test("空 broker 应抛出异常", False, "没有抛出预期的异常")
-except ValueError as e:
-    test("空 broker 正确抛出异常", True, f"异常: {str(e)[:50]}...")
-except Exception as e:
-    test("空 broker 检测", False, f"意外异常: {e}")
-
-# 测试无效的端口号
-try:
-    invalid_config = DEFAULT_CONFIG.copy()
-    invalid_config['mqtt']['port'] = 99999  # 超出范围
-    validate_config(invalid_config)
-    test("无效端口应抛出异常", False, "没有抛出预期的异常")
-except ValueError as e:
-    test("无效端口正确抛出异常", True, f"异常: {str(e)[:50]}...")
-except Exception as e:
-    test("无效端口检测", False, f"意外异常: {e}")
-
-# 测试无效的超时时间
-try:
-    invalid_config = DEFAULT_CONFIG.copy()
-    invalid_config['echo']['timeout'] = -1  # 负数
-    validate_config(invalid_config)
-    test("负数超时应抛出异常", False, "没有抛出预期的异常")
-except ValueError as e:
-    test("负数超时正确抛出异常", True, f"异常: {str(e)[:50]}...")
-except Exception as e:
-    test("负数超时检测", False, f"意外异常: {e}")
-
-# 测试无效的日志级别
-try:
-    invalid_config = DEFAULT_CONFIG.copy()
-    invalid_config['logging']['level'] = 'INVALID'
-    validate_config(invalid_config)
-    test("无效日志级别应抛出异常", False, "没有抛出预期的异常")
-except ValueError as e:
-    test("无效日志级别正确抛出异常", True, f"异常: {str(e)[:50]}...")
-except Exception as e:
-    test("无效日志级别检测", False, f"意外异常: {e}")
-
-# 测试无效的 UID
-try:
-    invalid_config = DEFAULT_CONFIG.copy()
-    invalid_config['echo']['uid'] = 70000  # 超出 uint16 范围
-    validate_config(invalid_config)
-    test("无效 UID 应抛出异常", False, "没有抛出预期的异常")
-except ValueError as e:
-    test("无效 UID 正确抛出异常", True, f"异常: {str(e)[:50]}...")
-except Exception as e:
-    test("无效 UID 检测", False, f"意外异常: {e}")
-
-# ========== 测试总结 ==========
-print("=" * 60)
-print(f"测试总结: {pass_count}/{test_count} 通过")
-print("=" * 60)
-
-if pass_count == test_count:
-    print("\n✅ 所有配置管理测试通过！\n")
-    sys.exit(0)
-else:
-    print(f"\n❌ 有 {test_count - pass_count} 个测试失败\n")
-    sys.exit(1)
+class TestExampleConfig:
+    def test_example_config_is_valid(self):
+        """仓库内的 config.yaml.example 必须通过验证"""
+        config = load_config("config.yaml.example")
+        assert validate_config(config) is True

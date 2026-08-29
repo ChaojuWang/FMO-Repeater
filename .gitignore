@@ -65,6 +65,10 @@ Thumbs.db
 # 日志文件
 *.log
 logs/
+*.jsonl
+
+# 语音录制输出
+recordings/
 
 # 配置文件（可能包含敏感信息）
 config.yaml
@@ -100,6 +104,10 @@ credentials/
 # Claude Code 相关
 .claude/
 .claude.json*
+
+# Reasonix 工具内部状态
+.reasonix/
+reasonix.toml
 
 # 数据文件
 data/

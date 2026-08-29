@@ -5,6 +5,8 @@
 - 将进程转为后台守护进程
 - PID 文件管理
 - 信号处理
+
+（自旧 daemon.py 原样迁移，见 docs/design/legacy/legacy-system.md）
 """
 
 import os
@@ -239,5 +241,5 @@ if __name__ == '__main__':
             print(f"未知命令: {sys.argv[1]}")
             sys.exit(1)
     else:
-        print("用法: python daemon.py {start|stop|restart|status}")
+        print("用法: python -m fmo_repeater.service.daemon {start|stop|restart|status}")
         sys.exit(1)

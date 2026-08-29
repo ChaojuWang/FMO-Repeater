@@ -14,14 +14,18 @@ import sys
 import argparse
 import time
 
-from config import load_config, validate_config, save_default_config
-from fmo_repeater_service import FMORepeaterService
-from daemon import Daemon
+from fmo_repeater.service.config import (
+    load_config,
+    validate_config,
+    save_default_config,
+)
+from fmo_repeater.service.echo import EchoService
+from fmo_repeater.service.daemon import Daemon
 
 
 def run_service(config_file: str = 'config.yaml'):
     """
-    运行 FMO Repeater 服务（前台模式）
+    运行 FMO Echo 服务（前台模式）
 
     Args:
         config_file: 配置文件路径
@@ -35,7 +39,7 @@ def run_service(config_file: str = 'config.yaml'):
         sys.exit(1)
 
     # 创建并启动服务
-    service = FMORepeaterService(config)
+    service = EchoService(config)
 
     try:
         # 连接 MQTT
@@ -142,21 +146,18 @@ def main():
         sys.exit(1)
 
     # 创建守护进程对象，指定工作目录为项目目录
-    # 获取当前脚本所在目录的绝对路径
     current_dir = os.path.dirname(os.path.abspath(__file__))
     daemon = Daemon(args.pid_file, working_dir=current_dir)
 
     # 执行相应操作
     if args.action == 'start':
         if args.daemon:
-            # 守护进程模式
             print(f"以守护进程模式启动 FMO Repeater 服务...")
             print(f"PID 文件: {args.pid_file}")
             print(f"配置文件: {args.config}")
             print(f"日志位置: 请查看配置文件中的 logging.file 设置")
             daemon.start(run_service, args.config)
         else:
-            # 前台模式
             print(f"启动 FMO Repeater 服务（前台模式）...")
             print(f"配置文件: {args.config}")
             print(f"按 Ctrl+C 停止服务")
