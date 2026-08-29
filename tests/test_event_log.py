@@ -22,7 +22,7 @@ class TestEventLog:
         }
         evlog = EventLog(cfg)
         evlog.log("service_started", version=1, vendor=0x2000)
-        evlog.log("packet_received", uid=42, callsign="BD8BOJ", frames=3)
+        evlog.log("packet_received", uid=42, callsign="FMOTEST", frames=3)
         evlog.close()
 
         events = read_events(cfg['event_log']['file'])

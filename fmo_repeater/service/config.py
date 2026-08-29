@@ -31,6 +31,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     'echo': {
         'timeout': 2.0,            # 流结束判定超时（秒）：松键后此时间内无新包即重放
+        'max_duration': 30.0,      # 回放时长上限（秒）：缓存跨度超过则只重放前 30 秒
         'vendor': VENDOR_DEFAULT,  # 重放时写入的 vendor（软件区，勿用保留区）
         'uid': 65535,              # 重放时写入的 UID（勿用 0：保持原值会被
                                    # 客户端按"自己发的"自过滤，设备收不到回声）
@@ -113,6 +114,8 @@ def validate_config(config: Dict[str, Any]) -> bool:
     echo = config['echo']
     if not isinstance(echo.get('timeout'), (int, float)) or echo['timeout'] <= 0:
         raise ValueError("Echo 超时时间必须是大于 0 的数值")
+    if not isinstance(echo.get('max_duration'), (int, float)) or echo['max_duration'] <= 0:
+        raise ValueError("Echo max_duration 必须是大于 0 的数值")
     vendor = echo.get('vendor')
     if not isinstance(vendor, int) or not (0 <= vendor <= 0xFFFFFFFF):
         raise ValueError("Echo vendor 必须是 0-0xFFFFFFFF 之间的整数")

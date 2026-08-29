@@ -43,6 +43,7 @@ class EchoService:
         self.replay_uid: int = echo_cfg['uid']            # 0 = 保持原值
         self.callsign_prefix: str = echo_cfg['callsign_prefix']
         self.stream_timeout: float = echo_cfg['timeout']
+        self.max_duration: float = echo_cfg.get('max_duration', 30.0)
 
         # 单消费者线程模型：MQTT 回调只入队，消费者线程串行化 缓存→超时→回放，
         # 消除并发操作 buffer 的竞态（此前导致流被切成多段）。
@@ -300,6 +301,20 @@ class EchoService:
         """按原始接收时间轴重放缓存消息（绝对截止时间，防累积漂移）"""
         if not batch:
             return
+        published_dropped = 0
+
+        # 截断：缓存首包→末包接收跨度超过 max_duration 时，只重放前 max_duration 内的包
+        span = batch[-1][1] - batch[0][1]
+        if span > self.max_duration:
+            cutoff = batch[0][1] + self.max_duration
+            kept = [x for x in batch if x[1] <= cutoff]
+            published_dropped = len(batch) - len(kept)
+            batch = kept
+            self.logger.info(
+                f"回放缓存跨度 {span:.2f}s 超过上限 {self.max_duration:.0f}s，"
+                f"截断丢弃尾部 {published_dropped} 个消息包"
+            )
+
         publish_topic = self.config['topics']['publish']
         first = batch[0][0].header
         self.event_log.log(
@@ -340,6 +355,7 @@ class EchoService:
                 self.logger.error(f"重放消息 [{i + 1}] 时出错: {e}", exc_info=True)
 
         duration = time.monotonic() - started_at
+        truncated = published_dropped > 0
         self.event_log.log(
             "replay_finished",
             uid=first.uid,
@@ -348,6 +364,8 @@ class EchoService:
             ok=success,
             failed=failed,
             duration_s=round(duration, 3),
+            truncated=truncated,
+            dropped=published_dropped,
         )
         self.event_log.log(
             "stream_end",
@@ -355,6 +373,8 @@ class EchoService:
             callsign=first.callsign,
             packets=len(batch),
             duration_s=round(duration, 3),
+            truncated=truncated,
+            dropped=published_dropped,
         )
         self.logger.info(
             f"重放完成 - 成功: {success}, 失败: {failed}, 总计: {len(batch)}"

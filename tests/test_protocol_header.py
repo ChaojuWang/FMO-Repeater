@@ -8,7 +8,7 @@ from fmo_repeater.protocol import HEADER_SIZE, VERSION, MessageHeader, ProtocolE
 class TestHeaderRoundtrip:
     def test_roundtrip_all_fields(self):
         h = MessageHeader(
-            version=1, vendor=0x2000, uid=123, callsign="BD8BOJ",
+            version=1, vendor=0x2000, uid=123, callsign="FMOTEST",
             stream_begin_utc=1700000000000 & 0xFFFFFFFF,
             timestamp=1700000001234 & 0xFFFFFFFF,
             length=408, frame_num=1, checksum=0xDEADBEEF,
@@ -20,7 +20,7 @@ class TestHeaderRoundtrip:
         assert h2.version == 1
         assert h2.vendor == 0x2000
         assert h2.uid == 123
-        assert h2.callsign == "BD8BOJ"
+        assert h2.callsign == "FMOTEST"
         assert h2.stream_begin_utc == 1700000000000 & 0xFFFFFFFF
         assert h2.timestamp == 1700000001234 & 0xFFFFFFFF
         assert h2.length == 408
@@ -62,11 +62,11 @@ class TestHeaderLayout:
         assert data[45:64] == b"\x00" * 19                           # reserved @45
 
     def test_callsign_truncation_and_padding(self):
-        h = MessageHeader(callsign="BD8BOJ-EXTRA-LONG")
+        h = MessageHeader(callsign="FMOTEST-LONGCALLSIGN")
         assert len(h.to_bytes()) == HEADER_SIZE
         h2 = MessageHeader.from_bytes(h.to_bytes())
-        # 12 字节截断："BD8BOJ-EXTRA"
-        assert h2.callsign == "BD8BOJ-EXTRA"
+        # 12 字节截断："FMOTEST-LONG"
+        assert h2.callsign == "FMOTEST-LONG"
 
     def test_callsign_multibyte(self):
         h = MessageHeader(callsign="乙1")
