@@ -79,8 +79,11 @@ def service_process(mqtt_credentials, tmp_path):
             'keepalive': 60,
         },
         'topics': {'subscribe': TOPIC, 'publish': TOPIC},
+        'transmission': {
+            'idle_timeout': 2.0, 'max_uplink_duration': 60,
+        },
         'echo': {
-            'timeout': 2.0, 'vendor': 0x2000, 'uid': 65535,
+            'vendor': 0x2000, 'uid': 65535,
             'callsign_prefix': 'RE>',
         },
         'event_log': {

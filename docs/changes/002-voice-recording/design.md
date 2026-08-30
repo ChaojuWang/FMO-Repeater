@@ -1,12 +1,12 @@
 # 详细设计：语音录制功能（Voice Recording）
 
-> status: designed（设计完成，待实施）
-> 变更编号：002 ｜ 上游提案：proposal.md ｜ 依赖：变更 001（已合并）
+> status: designed（经 change 005 修订，待实施）
+> 变更编号：002 ｜ 依赖：变更 001、005
 
 ## 1. 概述
 
-在 Echo 服务收包路径上新增 Recorder 组件：按发送者分流缓存编码语音帧，
-流结束后解码为 WAV（8kHz/16bit/mono）落盘，录制事件写入 JSONL 事件日志。
+新增 Recorder 事件消费者：每收到一个 `TransmissionCompleted`，解析其中的合法
+原始包并解码为 WAV（8kHz/16bit/mono）落盘，录制事件写入 JSONL 事件日志。
 
 **默认关闭**（`recording.enabled: false`），不影响现有部署；关闭时零开销 no-op。
 
@@ -18,7 +18,7 @@
 | `RadpcmDecoder`（codecs/radpcm.py） | RADPCM 帧 → 1280B PCM（含丢包恢复） |
 | `OpusDecoder` / `opus_is_available()`（codecs/opus_codec.py） | OPUS 帧 → 640B PCM / 依赖探测 |
 | `EventLog`（service/event_log.py） | 结构化录制事件 |
-| `EchoService` 流结束判定（service/echo.py） | 复用超时判定触发 finalize |
+| `TransmissionCompleted`（service/transmission.py） | 已经统一仲裁并封口的一次 PTT |
 
 ## 2. 配置
 
@@ -40,40 +40,35 @@
 ```python
 class Recorder:
     def __init__(self, config: Dict[str, Any], event_log: Optional[EventLog] = None)
-    def feed(self, packet: ParsedPacket) -> None       # 收包路径调用（MQTT 回调线程）
-    def finalize(self) -> None                          # 流结束调用（主循环/停止路径）
+    def handle(self, transmission: TransmissionCompleted) -> None
 ```
 
 - 构造：读取 `recording` 节；`enabled=false` → 全方法 no-op（与 `EventLog` 同模式）；
   `enabled=true` → 创建输出根目录（`os.makedirs(exist_ok=True)`）
-- `feed`：防循环过滤**不在 Recorder 内做**（由 EchoService 在调用前完成，
-  只喂有效包）；流切分判定见 §4
-- `finalize`：将当前流落盘并清空状态；服务 `stop()` 时也调用（残留流尽量保存）
-- 线程模型：`feed`（MQTT 回调线程）与 `finalize`（主循环线程）并发 → 内部
-  `threading.Lock` 保护；落盘（解码+写文件）在锁外执行避免阻塞收包，锁内仅做
-  队列交接（取出流数据 → 清空状态 → 锁外写盘）
+- `handle`：事件已经完成防循环、冲突仲裁与流边界判断；逐包解析后按 codec
+  segment 解码并落盘。
+- 线程模型：由 `TransmissionEventBus` 提供 Recorder 专属 FIFO 工作线程，
+  Recorder 无需与 MQTT/Echo 共享锁，也不阻塞其他消费者。
 
 ### 3.1 内部状态
 
 ```python
-_current: Optional[_StreamBuffer]   # 当前流缓冲，None 表示空闲
 _seq_counter: Dict[str, int]        # (callsign, 秒) → 已用序号，防文件名冲突
 ```
 
-`_StreamBuffer`：`uid / callsign / stream_begin_utc / first_local: datetime /
-segments: List[_Segment]`；`_Segment`：`codec: int / frames: List[EncodedVoiceFrame]`。
+每次 `handle` 的局部状态为 `uid / callsign / stream_begin_utc / first_local /
+segments`；`_Segment`：`codec / frames`。跨事件只保留文件名序号计数器。
 
-## 4. 流切分与结束判定（决策 R1）
+## 4. 事件与编码段边界（决策 R1）
 
 | 事件 | 行为 |
 |---|---|
-| `feed` 且无当前流 | 开新流（记录首包本地时间） |
-| `stream_begin_utc` 与当前流不同 | 先 finalize 旧流，再开新流 |
-| 流内 `compress_mode` 变化 | 当前 segment 收口，新 codec 追加新 segment（不整流切分） |
-| EchoService 超时判定流结束 / 服务停止 | `finalize()` 整流落盘 |
+| 收到 `TransmissionCompleted` | 作为一个独立录音流 |
+| 事件内 `compress_mode` 变化 | 当前 segment 收口，新 codec 追加新 segment |
+| 停机时队列中未处理事件 | 遵循 Repeater 的立即取消语义，不额外冲刷 |
 
-**备选否决**：Recorder 独立线程独立超时判定——与 Echo 超时重复且时间轴可能不一致；
-OPUS 40ms/RADPCM 80ms 混合流按帧切多文件——过度设计，段内切分足够。
+**备选否决**：Recorder 独立分流和超时——会与统一 ChannelCoordinator/Producer
+状态漂移；OPUS/RADPCM 按帧多文件——过度设计，codec segment 足够。
 
 ## 5. 文件命名与目录布局（决策 R2）
 
@@ -109,15 +104,15 @@ OPUS 40ms/RADPCM 80ms 混合流按帧切多文件——过度设计，段内切�
 ≈750 RADPCM 帧 × 336B ≈ 250KB，内存可控（决策 R4；备选"边收边增量写"需自行
 维护 RIFF 头长度字段，复杂度不值）。
 
-## 7. EchoService 集成
+## 7. RepeaterService 集成
 
-`echo.py` 三处埋点（recording.enabled=false 时零开销）：
+启用录音时由组合根注册独立消费者：
 
 | 位置 | 调用 |
 |---|---|
-| `__init__` | `self.recorder = Recorder(config, event_log)` |
-| `_on_message` 有效包缓存后 | `self.recorder.feed(packet)` |
-| `_check_timeout` 触发重放前后 / `stop()` | `self.recorder.finalize()` |
+| `RepeaterService.__init__` | 构造 `Recorder(config, event_log)` |
+| 事件总线注册 | `event_bus.subscribe("recorder", recorder.handle)` |
+| `recording.enabled=false` | 不构造、不订阅，接收路径零额外处理 |
 
 ## 8. 事件模式扩展
 
@@ -148,17 +143,17 @@ OPUS 40ms/RADPCM 80ms 混合流按帧切多文件——过度设计，段内切�
   = 640×帧数、内容与 RadpcmDecoder 直接解码一致）
 - OPUS 流（有 libopus）：WAV 样本数 = 320×帧数；无 libopus → `.opusraw` 存在、
   字节流 = 编码帧序列（含 8B 头）、事件 `degraded: true`
-- 流切分：stream_begin_utc 变化出两文件；同流 codec 变化出两 segment 两文件
+- 事件边界：两个完成事件产出两组文件；同事件 codec 变化出两个 segment 文件
 - 命名：同 (callsign, 秒) 两流 seq 001/002；非法呼号（空格/`..`/空）清洗
 - 事件：recording_saved/discarded 字段完整
-- EchoService 集成：mock MQTT 收包→超时→feed/finalize 被调用且文件生成
+- RepeaterService 集成：mock MQTT 收包→完成事件→Recorder 消费并生成文件
 - `test_config.py` 增补：recording 节默认值/校验（enabled bool、空 directory 拒绝）
 
 ## 11. 关键决策记录
 
 | # | 决策 | 备选 | 理由 |
 |---|---|---|---|
-| R1 | 复用 EchoService 超时判定流结束 | Recorder 独立线程判定 | 同一时间轴；避免双超时状态机漂移 |
+| R1 | 直接消费统一完成事件 | Recorder 独立超时判定 | 与信道仲裁共用唯一 PTT 边界 |
 | R2 | `(callsign, 秒)` 内 3 位 seq 防文件名冲突 | 时间戳后缀/全局单调 seq | 同秒冲突确定性解决；命名可读、可测 |
 | R3 | segment 按 codec 切分文件 | 混合流单文件/按帧多文件 | WAV 单一 codec；opusraw 降级粒度自然 |
 | R4 | 流结束一次性写 WAV | 增量追加（自维护 RIFF 头） | 内存可控（≤~250MB 上限远低于语音流实际长度）；实现简单可靠 |

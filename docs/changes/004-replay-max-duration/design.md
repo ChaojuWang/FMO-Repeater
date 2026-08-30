@@ -1,6 +1,6 @@
 # 详细设计：回放缓存截断（max_duration）
 
-> status: implemented ｜ 变更编号：004 ｜ 依赖：003（单消费者线程回放）
+> status: merged ｜ 变更编号：004 ｜ 依赖：003
 
 ## 1. 配置
 

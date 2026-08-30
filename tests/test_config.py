@@ -26,8 +26,13 @@ class TestDeepMerge:
 
 class TestDefaultConfig:
     def test_defaults_complete(self):
-        for section in ('mqtt', 'topics', 'echo', 'event_log', 'logging', 'daemon'):
+        for section in (
+            'mqtt', 'topics', 'transmission', 'echo',
+            'event_log', 'logging', 'daemon',
+        ):
             assert section in DEFAULT_CONFIG
+        assert DEFAULT_CONFIG['transmission']['idle_timeout'] == 2.0
+        assert DEFAULT_CONFIG['transmission']['max_uplink_duration'] == 60
         assert DEFAULT_CONFIG['echo']['vendor'] == 0x2000
         assert DEFAULT_CONFIG['echo']['uid'] == 65535
         assert DEFAULT_CONFIG['echo']['callsign_prefix'] == 'RE>'
@@ -65,6 +70,12 @@ class TestLoadConfig:
         with pytest.raises(yaml.YAMLError):
             load_config(str(cfg_file))
 
+    def test_legacy_echo_timeout_migrates(self, tmp_path):
+        cfg_file = tmp_path / "legacy.yaml"
+        cfg_file.write_text("echo:\n  timeout: 3.5\n", encoding="utf-8")
+        config = load_config(str(cfg_file))
+        assert config['transmission']['idle_timeout'] == 3.5
+
 
 class TestValidateConfig:
     def _base(self):
@@ -98,8 +109,15 @@ class TestValidateConfig:
 
     def test_bad_timeout(self):
         cfg = self._base()
-        cfg['echo']['timeout'] = -1
-        with pytest.raises(ValueError, match="超时"):
+        cfg['transmission']['idle_timeout'] = -1
+        with pytest.raises(ValueError, match="idle_timeout"):
+            validate_config(cfg)
+
+    @pytest.mark.parametrize("value", [-1, 1, 45, 121, "60"])
+    def test_bad_max_uplink_duration(self, value):
+        cfg = self._base()
+        cfg['transmission']['max_uplink_duration'] = value
+        with pytest.raises(ValueError, match="max_uplink_duration"):
             validate_config(cfg)
 
     def test_bad_max_duration(self):

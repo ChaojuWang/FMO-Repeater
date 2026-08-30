@@ -10,7 +10,7 @@ Echo 服务天然汇集全网语音流，具备录制归档价值：回放调试
 ## 2. 目标
 
 1. 可配置开关：`recording.enabled`，**默认 false**（不影响现有部署）
-2. 开启后：按发送者分流录制语音流，流结束（超时 / 新 streamBeginUTC）时落盘
+2. 开启后：订阅 `TransmissionCompleted`，每个获准占用信道的 PTT 独立落盘
 3. 输出 WAV（8kHz / 16bit / mono，协议公共音频参数），RADPCM 纯 Python 解码；OPUS 依赖 libopus，缺失时降级保存原始编码帧（`.opusraw`）
 4. 录制事件写入 JSONL 事件日志（复用变更 001 的 event_log）
 
@@ -34,10 +34,10 @@ Echo 服务天然汇集全网语音流，具备录制归档价值：回放调试
   - `seq`：同一（呼号, 秒）下防冲突的递增序号，3 位
   - `codec`：`RADPCM` / `OPUS`；降级时扩展名 `.opusraw`
   - 非法呼号字符（路径不安全）替换为 `_`
-- 流切分：`stream_begin_utc` 变化即新流；与 Echo 超时共用流结束判定
+- 流边界：直接采用 change 005 统一仲裁和超时后产生的完成事件，不再自行切流
 - WAV 写入：`wave` 标准库（PCM 16bit mono 8kHz，非压缩 RIFF）
 - 降级：OPUS 帧无 libopus → 逐帧拼接 raw（保留 8B 编码帧头便于事后离线解码），后缀 `.opusraw`，事件日志记 `degraded: true`
 
 ## 5. 依赖
 
-- 变更 001：协议层（ParsedPacket）、codecs（RadpcmDecoder / OpusDecoder）、event_log
+- 变更 001：协议层、codecs、event_log；变更 005：`TransmissionCompleted` 事件总线

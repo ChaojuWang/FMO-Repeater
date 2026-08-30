@@ -21,9 +21,13 @@ topics:
   subscribe: "FMO/RAW"  # 订阅的主题（接收原始 FMO 消息包）
   publish: "FMO/RAW"    # 发布的主题（重放修改后的消息包）
 
+# 单信道 PTT 识别与协议 §8 仲裁
+transmission:
+  idle_timeout: 2.0          # 最后一包后满 2 秒，封口为一次 PTT 完成事件
+  max_uplink_duration: 60    # 连续上行限制：0（不限）或 30/60/90/120 秒
+
 # Echo 服务配置
 echo:
-  timeout: 2.0              # 流结束判定超时（秒）：松键后此时间内无新消息则回放
   max_duration: 30.0        # 回放时长上限（秒）：缓存跨度超过则只重放前 30 秒
   vendor: 0x2000            # 重放时写入的厂家标识（软件区 0x2000-0x2FFF 自由取用；
                             # 严禁使用保留区 0x0000-0x0FFF；正式区 0x3000+ 需登记）

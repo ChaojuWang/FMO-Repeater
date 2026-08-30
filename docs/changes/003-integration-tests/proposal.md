@@ -1,6 +1,6 @@
 # 提案：真实 MQTT 集成测试（Integration Tests）
 
-> status: designed（设计完成，随本变更一并实现）
+> status: merged
 > 变更编号：003
 
 ## 1. 动机

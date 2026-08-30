@@ -12,8 +12,8 @@
 ## T2 Recorder 实现
 - [ ] T2.1 `fmo_repeater/service/recorder.py` Recorder 类骨架（开关 no-op 模式、锁、输出目录创建）
   - 验收：enabled=false 时 feed/finalize no-op、无目录创建
-- [ ] T2.2 流切分（§4）：stream_begin_utc 变化 finalize+开新流；codec 变化 segment 收口
-  - 验收：两流两文件；同流混合 codec 两 segment 两文件
+- [ ] T2.2 事件消费（§4）：每个 TransmissionCompleted 独立录制；codec 变化 segment 收口
+  - 验收：两个事件两组文件；单事件混合 codec 两 segment 两文件
 - [ ] T2.3 WAV 落盘（RADPCM/OPUS）：wave 标准库 8kHz/16bit/mono；duration_ms 统计
   - 验收：`wave` 读回参数与样本数正确；样本数=640×帧数（RADPCM）/320×帧数（OPUS）
 - [ ] T2.4 OPUS 降级 `.opusraw`（含 8B 编码帧头）与事件 degraded: true
@@ -23,9 +23,9 @@
 - [ ] T2.6 错误处理（§9）：单帧解码异常跳帧计数；写盘失败事件+WARNING 不中断服务
   - 验收：注入坏帧后整流仍落盘且 recording_saved.frames 为成功帧数
 
-## T3 EchoService 集成
-- [ ] T3.1 echo.py 三处埋点：__init__ 构造 / _on_message feed / 超时与 stop finalize
-  - 验收：recording.enabled=false 零开销；开启后 mock MQTT 全流程文件生成
+## T3 RepeaterService 集成
+- [ ] T3.1 注册 Recorder 为独立 TransmissionConsumer
+  - 验收：recording.enabled=false 不订阅；开启后 mock MQTT 全流程文件生成
 
 ## T4 事件日志
 - [ ] T4.1 新事件 recording_stream_start / recording_saved / recording_discarded

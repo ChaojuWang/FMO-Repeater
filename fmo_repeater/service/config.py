@@ -29,8 +29,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         'subscribe': 'FMO/RAW',
         'publish': 'FMO/RAW',
     },
+    'transmission': {
+        'idle_timeout': 2.0,       # 最后一包后此时间封口为一次 PTT
+        'max_uplink_duration': 60, # 协议 §8.5：0=不限，或 30/60/90/120 秒
+    },
     'echo': {
-        'timeout': 2.0,            # 流结束判定超时（秒）：松键后此时间内无新包即重放
         'max_duration': 30.0,      # 回放时长上限（秒）：缓存跨度超过则只重放前 30 秒
         'vendor': VENDOR_DEFAULT,  # 重放时写入的 vendor（软件区，勿用保留区）
         'uid': 65535,              # 重放时写入的 UID（勿用 0：保持原值会被
@@ -76,6 +79,14 @@ def load_config(config_file: str = 'config.yaml') -> Dict[str, Any]:
             with open(config_file, 'r', encoding='utf-8') as f:
                 user_config = yaml.safe_load(f)
                 if user_config:
+                    # 兼容旧配置：echo.timeout 已迁移为 transmission.idle_timeout。
+                    legacy_timeout = user_config.get('echo', {}).get('timeout')
+                    transmission_override = user_config.get('transmission', {})
+                    if legacy_timeout is not None and 'idle_timeout' not in transmission_override:
+                        user_config = deep_merge(
+                            user_config,
+                            {'transmission': {'idle_timeout': legacy_timeout}},
+                        )
                     config = deep_merge(config, user_config)
                     print(f"已加载配置文件: {config_file}")
                 else:
@@ -91,7 +102,9 @@ def load_config(config_file: str = 'config.yaml') -> Dict[str, Any]:
 
 def validate_config(config: Dict[str, Any]) -> bool:
     """校验配置完整性与合理性，失败抛 ValueError"""
-    required_sections = ['mqtt', 'topics', 'echo', 'event_log', 'logging']
+    required_sections = [
+        'mqtt', 'topics', 'transmission', 'echo', 'event_log', 'logging'
+    ]
     for section in required_sections:
         if section not in config:
             raise ValueError(f"缺少必需的配置节: {section}")
@@ -110,10 +123,19 @@ def validate_config(config: Dict[str, Any]) -> bool:
     if not topics.get('publish'):
         raise ValueError("发布主题不能为空")
 
+    # 单信道 PTT
+    transmission = config['transmission']
+    idle_timeout = transmission.get('idle_timeout')
+    if not isinstance(idle_timeout, (int, float)) or idle_timeout <= 0:
+        raise ValueError("transmission.idle_timeout 必须是大于 0 的数值")
+    max_uplink = transmission.get('max_uplink_duration')
+    if max_uplink not in (0, 30, 60, 90, 120):
+        raise ValueError(
+            "transmission.max_uplink_duration 必须是 0/30/60/90/120"
+        )
+
     # Echo
     echo = config['echo']
-    if not isinstance(echo.get('timeout'), (int, float)) or echo['timeout'] <= 0:
-        raise ValueError("Echo 超时时间必须是大于 0 的数值")
     if not isinstance(echo.get('max_duration'), (int, float)) or echo['max_duration'] <= 0:
         raise ValueError("Echo max_duration 必须是大于 0 的数值")
     vendor = echo.get('vendor')

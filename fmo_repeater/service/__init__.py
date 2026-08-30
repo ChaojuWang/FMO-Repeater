@@ -10,6 +10,14 @@ from .config import (
 from .logging_setup import setup_logging
 from .event_log import EventLog
 from .echo import EchoService
+from .repeater import RepeaterService
+from .transmission import (
+    TimedPacket,
+    TransmissionCompleted,
+    TransmissionConsumer,
+    TransmissionEventBus,
+    TransmissionProducer,
+)
 from .daemon import Daemon
 
 __all__ = [
@@ -21,5 +29,11 @@ __all__ = [
     "setup_logging",
     "EventLog",
     "EchoService",
+    "RepeaterService",
+    "TimedPacket",
+    "TransmissionCompleted",
+    "TransmissionConsumer",
+    "TransmissionEventBus",
+    "TransmissionProducer",
     "Daemon",
 ]

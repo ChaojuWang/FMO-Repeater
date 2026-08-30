@@ -1,6 +1,6 @@
 # 协议层设计
 
-> Merged from changes/001
+> Merged from changes/001, 005
 > 上游规范：FMO 语音数据开放协议 v1（https://bg5esn.com/docs/fmo-voice-codec-spec/）
 
 ## 1. 消息包总览
@@ -76,7 +76,18 @@ compress_mode：0=PCM（预留不实现，决策 D3）、1=OPUS、2=RADPCM。
 {too_short, bad_length, bad_checksum, bad_frame_num, bad_index,
 bad_length_frames, bad_compress_mode, frame_too_long}。
 
-## 7. 未实现（预留）
+## 7. PTT 单信道路由仲裁
 
-- §8 PTT 仲裁（1500ms 路由窗口/抢占规则）：字段（uid/stream_begin_utc）已可解析，
-  机制本身面向设备端，Echo 场景不需要；留作后续 change。
+> Merged from changes/005
+
+`protocol/ptt.py` 实现规范 §8.4/§8.5 的纯状态机 `ChannelCoordinator`：
+
+- 路由窗口 1500ms；同 UID 续占并刷新窗口
+- 当前路由超时后新 UID 接管
+- `stream_begin_utc` 更早且差值不超过 2000ms 时抢占
+- 起始时间相同由更小 UID 抢占；其余拒绝
+- uint32 时间使用模差值的有符号解释，正确处理回绕
+- 连续上行默认 60s，可选 0/30/60/90/120s；超限 UID 静默 1500ms 后解禁
+
+网络包与 Echo 本地回放共享同一个协调器。Echo 通过可撤销 `ChannelLease` 在每包
+发布前刷新路由；网络包按相同规则抢占后，租约立即失效。

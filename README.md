@@ -17,7 +17,7 @@ FMO（FM Over Internet）是通过互联网中继 FM 信号的设备。本项目
   MTU 1400B + 250ms 聚合规则
 - **语音编解码**：RADPCM（IMA ADPCM，纯 Python 完整实现）与 OPUS（libopus）
 - **结构化事件日志**：JSONL 格式，独立于运行日志
-- **可扩展架构**：protocol / codecs / service 三层分包
+- **单信道仲裁与事件架构**：FMO §8 路由裁决，完整 PTT 作为进程内事件广播
 
 ## 🚀 快速开始
 
@@ -58,16 +58,20 @@ python main.py --generate-config out.yaml  # 生成配置模板
 
 覆盖：协议头/帧/组包拆包（CRC、聚合上限）、vendor 区间、RADPCM 编解码
 （SNR、丢包恢复、旧格式兼容）、OPUS（缺依赖自动 skip）、Echo 防循环矩阵、
-配置校验、JSONL 事件日志。117 个用例。
+配置校验、JSONL 事件日志、单信道仲裁与 Echo 抢占。
 
 ## ⚙️ 配置要点
 
 ```yaml
+transmission:
+  idle_timeout: 2.0          # 最后一包后满 2 秒封口为一次 PTT
+  max_uplink_duration: 60    # 0（不限）或 30/60/90/120 秒
+
 echo:
-  timeout: 5.0         # 流结束超时（秒）
+  max_duration: 30.0  # 单次回放上限
   vendor: 0x2000       # 重放 vendor：软件区 0x2000-0x2FFF 自由取用
                        # 严禁保留区 0x0000-0x0FFF；正式区 0x3000+ 需登记
-  uid: 0               # 重放 UID（0 = 保持原值）
+  uid: 65535           # 重放 UID
   callsign_prefix: 'RE>'
 
 event_log:             # JSONL 结构化事件日志
@@ -82,9 +86,9 @@ event_log:             # JSONL 结构化事件日志
 
 ```
 fmo_repeater/
-├── protocol/          # 协议层：vendor / header(64B) / frame / packet(组包拆包/CRC/聚合)
+├── protocol/          # 协议层：header/frame/packet + PTT 路由仲裁
 ├── codecs/            # 编解码：radpcm(IMA ADPCM) / opus_codec(可选)
-└── service/           # 服务：config / echo / event_log(JSONL) / logging_setup / daemon
+└── service/           # Repeater 组合、PTT 事件总线、Echo、日志与 daemon
 ```
 
 详细设计见 [docs/design/](docs/design/)（SDD 流程见

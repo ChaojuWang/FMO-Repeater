@@ -100,8 +100,11 @@ def service_config(tmp_path):
             'client_id_prefix': 'test_fmo', 'keepalive': 60,
         },
         'topics': {'subscribe': 'TEST/FMO/RAW', 'publish': 'TEST/FMO/RAW'},
+        'transmission': {
+            'idle_timeout': 2.0, 'max_uplink_duration': 60,
+        },
         'echo': {
-            'timeout': 2.0, 'max_duration': 30.0,
+            'max_duration': 30.0,
             'vendor': 0x2000, 'uid': 65535,
             'callsign_prefix': 'RE>',
         },

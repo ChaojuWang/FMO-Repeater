@@ -19,7 +19,7 @@ from fmo_repeater.service.config import (
     validate_config,
     save_default_config,
 )
-from fmo_repeater.service.echo import EchoService
+from fmo_repeater.service.repeater import RepeaterService
 from fmo_repeater.service.daemon import Daemon
 
 
@@ -39,7 +39,7 @@ def run_service(config_file: str = 'config.yaml'):
         sys.exit(1)
 
     # 创建并启动服务
-    service = EchoService(config)
+    service = RepeaterService(config)
 
     try:
         # 连接 MQTT

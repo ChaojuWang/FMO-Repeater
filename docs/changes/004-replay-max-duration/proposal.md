@@ -1,6 +1,6 @@
 # 提案：回放缓存超过 max_duration 时截断
 
-> status: implemented
+> status: merged
 > 变更编号：004
 
 ## 1. 动机
