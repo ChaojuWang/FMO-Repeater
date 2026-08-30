@@ -199,6 +199,16 @@ class TestBuilderAggregation:
         sizes = [PacketParser.parse(p).header.frame_num for p in packets]
         assert all(s <= 2 for s in sizes)
 
+    def test_single_oversized_frame_remains_compatible(self):
+        """兼容既有发送端：不可拆单帧即使超过建议 MTU 仍可构造和解析。"""
+        builder = PacketBuilder(vendor=0x2000, uid=1, callsign="T")
+        packet = builder.add_frame(
+            EncodedVoiceFrame(COMPRESS_OPUS, b"\x00" * 1350)
+        )
+        assert packet is not None
+        assert len(packet) == 1430 > MTU
+        assert PacketParser.parse(packet).data == packet
+
     def test_builder_flush_empty(self):
         builder = PacketBuilder(vendor=0x2000, uid=1, callsign="T")
         assert builder.flush() is None

@@ -1,6 +1,6 @@
 # 服务层设计
 
-> Merged from changes/001, 003, 004, 005
+> Merged from changes/001, 003, 004, 005, 006
 
 ## 1. 配置
 
@@ -13,15 +13,16 @@ transmission:
 echo:
   max_duration: 30.0
   vendor: 0x2000
-  uid: 65535
-  callsign_prefix: 'RE>'
+  uid: 65535                 # 必须非零
+  callsign_prefix: 'RE>'     # 非空，UTF-8 编码不超过 12B
 event_log: {enabled, file, max_bytes, backup_count}
 logging: {level, console, file, max_bytes, backup_count}
 daemon: {enabled, pid_file}
 ```
 
 旧配置的 `echo.timeout` 在加载时迁移为 `transmission.idle_timeout`。vendor 拒绝
-保留区；PTT 超时和 Echo 最大时长必须为正数；上行限制只接受规范允许值。
+保留区；Echo UID 必须非零且呼号前缀必须完整落入 12B 线字段；PTT 超时和 Echo
+最大时长必须为正数；上行限制只接受规范允许值。
 
 ## 2. PTT 完成事件
 

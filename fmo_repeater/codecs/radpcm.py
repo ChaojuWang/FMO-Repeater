@@ -103,6 +103,12 @@ def parse_frame(frame: bytes) -> tuple[RadpcmFrameInfo, bytes]:
         _FRAME_STRUCT.unpack_from(frame, 0)
     data = frame[8:8 + DATA_BYTES]
 
+    if not 0 <= step_index < len(IMA_STEP_TABLE):
+        raise ProtocolError(
+            "bad_step_index",
+            f"RADPCM step_index 必须在 0..88：实际 {step_index}",
+        )
+
     adpcm_low = adpcm_raw & 0xFF
     adpcm_high = (adpcm_raw >> 8) & 0xFF
     if adpcm_raw == DATA_BYTES:
@@ -139,6 +145,11 @@ def build_frame(
     if len(data) != DATA_BYTES:
         raise ProtocolError(
             "bad_length", f"RADPCM 数据区必须 {DATA_BYTES}B：实际 {len(data)}B"
+        )
+    if not isinstance(step_index, int) or not 0 <= step_index < len(IMA_STEP_TABLE):
+        raise ProtocolError(
+            "bad_step_index",
+            f"RADPCM step_index 必须在 0..88：实际 {step_index}",
         )
     return _FRAME_STRUCT.pack(
         frame_index, recover_pcm, step_index, 0, DATA_BYTES, data

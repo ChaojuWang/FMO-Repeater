@@ -104,6 +104,20 @@ class TestFrameStructure:
         with pytest.raises(ProtocolError):
             parse_frame(bytes(bad))
 
+    @pytest.mark.parametrize("step_index", [89, 255])
+    def test_bad_step_index_rejected_while_parsing(self, step_index):
+        frame = bytearray(encode_frame(b"\x00" * (SAMPLES_PER_FRAME * 2)))
+        frame[4] = step_index
+        with pytest.raises(ProtocolError) as exc:
+            parse_frame(bytes(frame))
+        assert exc.value.reason == "bad_step_index"
+
+    @pytest.mark.parametrize("step_index", [-1, 89, 255])
+    def test_bad_step_index_rejected_while_building(self, step_index):
+        with pytest.raises(ProtocolError) as exc:
+            build_frame(0, 0, step_index, b"\x00" * DATA_BYTES)
+        assert exc.value.reason == "bad_step_index"
+
     def test_build_frame_size_check(self):
         with pytest.raises(ProtocolError):
             build_frame(0, 0, 0, b"\x00" * 319)
