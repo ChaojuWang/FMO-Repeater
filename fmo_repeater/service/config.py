@@ -56,10 +56,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         'max_bytes': 10485760,
         'backup_count': 5,
     },
-    'daemon': {
-        'enabled': False,
-        'pid_file': '/var/run/fmo_repeater.pid',
-    },
+    # 守护进程不再读取配置（changes/008）：
+    # PID 文件由 CLI --pid-file 控制，默认 /tmp/fmo_repeater.pid；
+    # 模式由显式 start --daemon 控制。旧配置中的 daemon 节会被忽略。
 }
 
 
