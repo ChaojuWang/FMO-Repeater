@@ -1,12 +1,12 @@
 # 协议层设计
 
-> Merged from changes/001, 005
+> Merged from changes/001, 005, 006
 > 上游规范：FMO 语音数据开放协议 v1（https://bg5esn.com/docs/fmo-voice-codec-spec/）
 
 ## 1. 消息包总览
 
 ```
-消息包（≤1400B）
+消息包（通常 ≤1400B；不可拆单帧保留兼容例外）
 ├─ 消息头（固定 64B）
 └─ 传输帧 × N
      ├─ 传输帧头（8B）
@@ -58,7 +58,7 @@ compress_mode：0=PCM（预留不实现，决策 D3）、1=OPUS、2=RADPCM。
 - 追加帧后 `64 + Σ(8+帧长) > 1400`（MTU）或聚合时长 `> 250ms` → 封包返回并重置缓冲
 - 效果：每包 OPUS ≤6 帧、RADPCM ≤3 帧
 - `stream_begin_utc` 取缓冲首帧时刻；封包时填 `timestamp`/`length`/`frame_num`/`checksum`
-- 空缓冲时单帧仍超限 → 立即封包（防死锁）
+- 空缓冲时单帧仍超限 → 立即封包（兼容既有发送端和录制数据，不过滤）
 - `flush()`：流结束冲刷剩余
 
 ## 5. vendor 体系

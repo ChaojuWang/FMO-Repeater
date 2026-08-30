@@ -6,7 +6,7 @@
 #   pip install -r requirements-dev.txt
 
 # MQTT 客户端库
-paho-mqtt>=1.6.0
+paho-mqtt>=2.0,<3
 
 # YAML 配置文件解析
 PyYAML>=6.0

@@ -31,9 +31,8 @@ echo:
   max_duration: 30.0        # 回放时长上限（秒）：缓存跨度超过则只重放前 30 秒
   vendor: 0x2000            # 重放时写入的厂家标识（软件区 0x2000-0x2FFF 自由取用；
                             # 严禁使用保留区 0x0000-0x0FFF；正式区 0x3000+ 需登记）
-  uid: 65535                # 重放时写入的 UID；勿设 0（保持原值会被客户端按
-                            # "自己发的"自过滤，设备收不到回声）
-  callsign_prefix: "RE>"    # 呼号前缀，原始呼号 "BD8BOJ" 变为 "RE>BD8BOJ"
+  uid: 65535                # 重放时写入的非零 UID；0 为非法配置
+  callsign_prefix: "RE>"    # 非空且 UTF-8 编码不超过 12B；原呼号变为 "RE>BD8BOJ"
 
 # 结构化事件日志（JSONL，每行一个 JSON 事件）
 event_log:

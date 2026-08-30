@@ -127,6 +127,26 @@ class TestValidateConfig:
             with pytest.raises(ValueError, match="max_duration"):
                 validate_config(cfg)
 
+    @pytest.mark.parametrize("value", [0, -1, True])
+    def test_echo_uid_must_be_nonzero_integer(self, value):
+        cfg = self._base()
+        cfg['echo']['uid'] = value
+        with pytest.raises(ValueError, match="非零整数"):
+            validate_config(cfg)
+
+    @pytest.mark.parametrize("value", ['', 'A' * 13, '回声测试A'])
+    def test_callsign_prefix_rejects_empty_or_over_12_utf8_bytes(self, value):
+        cfg = self._base()
+        cfg['echo']['callsign_prefix'] = value
+        with pytest.raises(ValueError, match="呼号前缀"):
+            validate_config(cfg)
+
+    @pytest.mark.parametrize("value", ['A' * 12, '回声测试'])
+    def test_callsign_prefix_accepts_12_utf8_byte_boundary(self, value):
+        cfg = self._base()
+        cfg['echo']['callsign_prefix'] = value
+        assert validate_config(cfg) is True
+
     def test_empty_topics(self):
         cfg = self._base()
         cfg['topics']['subscribe'] = ''

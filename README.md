@@ -71,8 +71,8 @@ echo:
   max_duration: 30.0  # 单次回放上限
   vendor: 0x2000       # 重放 vendor：软件区 0x2000-0x2FFF 自由取用
                        # 严禁保留区 0x0000-0x0FFF；正式区 0x3000+ 需登记
-  uid: 65535           # 重放 UID
-  callsign_prefix: 'RE>'
+  uid: 65535           # 非零重放 UID
+  callsign_prefix: 'RE>' # 非空，UTF-8 编码不超过 12B
 
 event_log:             # JSONL 结构化事件日志
   enabled: true

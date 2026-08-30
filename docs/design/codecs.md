@@ -1,6 +1,6 @@
 # 编解码层设计
 
-> Merged from changes/001
+> Merged from changes/001, 006
 
 ## 1. 公共参数
 
@@ -17,6 +17,8 @@ frame_index(H) recover_pcm(h) step_index(B) reserved(B) adpcm_bytes(H) data(320B
 - 640 样本（80ms）→ 320B 数据区（每字节 2 个 4-bit 样本，高 nibble 在前）
 - `adpcm_bytes`：新实现 uint16=320；兼容旧 8-bit 包（低字节 64 且高字节 0 → legacy）
 - 帧恢复点：`recover_pcm`/`step_index` = 本帧编码开始时的 IMA 状态
+- `parse_frame` 与 `build_frame` 均校验 `step_index` 为 0..88；非法恢复点统一抛
+  `ProtocolError(reason="bad_step_index")`
 
 ### 2.2 IMA ADPCM 核心
 

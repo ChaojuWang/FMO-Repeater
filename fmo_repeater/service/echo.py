@@ -46,7 +46,7 @@ class EchoService:
         """识别 MQTT 回环的本服务语音包。"""
         if header.vendor != self.replay_vendor:
             return False
-        if self.replay_uid and header.uid == self.replay_uid:
+        if header.uid == self.replay_uid:
             return True
         return header.callsign.startswith(self.callsign_prefix)
 
@@ -67,7 +67,7 @@ class EchoService:
 
         replay_stream_begin = _utc_ms()
         lease = self.coordinator.try_start_echo(
-            self.replay_uid or transmission.uid,
+            self.replay_uid,
             replay_stream_begin,
             time.monotonic(),
         )
@@ -95,7 +95,7 @@ class EchoService:
             "echo_route_acquired",
             uid=transmission.uid,
             callsign=transmission.callsign,
-            replay_uid=self.replay_uid or transmission.uid,
+            replay_uid=self.replay_uid,
             stream_begin_utc=replay_stream_begin,
         )
 
@@ -180,8 +180,7 @@ class EchoService:
             stream_begin_utc=now_ms if stream_begin_utc is None else stream_begin_utc,
             timestamp=now_ms,
         )
-        if self.replay_uid:
-            new_header.uid = self.replay_uid
+        new_header.uid = self.replay_uid
         return new_header.to_bytes() + b"".join(
             frame.to_bytes() for frame in packet.frames
         )

@@ -14,6 +14,7 @@ from ..protocol.vendor import (
     vendor_zone,
     VENDOR_DEFAULT,
 )
+from ..protocol.header import CALLSIGN_SIZE
 
 # 默认配置
 DEFAULT_CONFIG: Dict[str, Any] = {
@@ -146,10 +147,22 @@ def validate_config(config: Dict[str, Any]) -> bool:
             f"Echo vendor {vendor:#x} 位于保留区（0x0000-0x0FFF，FMO 项目方专用），"
             f"当前区间: {vendor_zone(vendor)}，严禁使用"
         )
-    if not isinstance(echo.get('uid'), int) or not (0 <= echo['uid'] <= 0xFFFFFFFF):
-        raise ValueError("Echo UID 必须是 0-0xFFFFFFFF 之间的整数")
-    if not isinstance(echo.get('callsign_prefix'), str):
+    if (
+        not isinstance(echo.get('uid'), int)
+        or isinstance(echo['uid'], bool)
+        or not (1 <= echo['uid'] <= 0xFFFFFFFF)
+    ):
+        raise ValueError("Echo UID 必须是 1-0xFFFFFFFF 之间的非零整数")
+    callsign_prefix = echo.get('callsign_prefix')
+    if not isinstance(callsign_prefix, str):
         raise ValueError("呼号前缀必须是字符串")
+    if not callsign_prefix:
+        raise ValueError("呼号前缀不能为空")
+    prefix_bytes = callsign_prefix.encode('utf-8')
+    if len(prefix_bytes) > CALLSIGN_SIZE:
+        raise ValueError(
+            f"呼号前缀 UTF-8 编码后不得超过 {CALLSIGN_SIZE} 字节"
+        )
 
     # 事件日志
     event_log = config['event_log']
