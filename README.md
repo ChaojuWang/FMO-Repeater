@@ -63,6 +63,10 @@ python main.py --generate-config out.yaml  # 生成配置模板
 ## ⚙️ 配置要点
 
 ```yaml
+mqtt:
+  qos: 0                  # 0/1/2；默认 0 保持实时语音低延迟行为
+  publish_timeout: 5.0    # 等待 Paho 发布完成的最长秒数
+
 transmission:
   idle_timeout: 2.0          # 最后一包后满 2 秒封口为一次 PTT
   max_uplink_duration: 60    # 0（不限）或 30/60/90/120 秒
@@ -97,7 +101,8 @@ fmo_repeater/
 
 ## 🔒 安全考虑
 
-- 生产环境建议 MQTT TLS 与凭据管理（当前配置文件明文，勿提交 config.yaml）
+- 当前 FMO 网络使用明文 MQTT，服务不提供 TLS 配置；应部署在受信网络并限制 broker ACL
+- 配置文件中的 MQTT 凭据为明文，勿提交真实 `config.yaml`
 - 事件日志含呼号/UID 等通联元数据，注意磁盘与隐私管理
 
 ## 📄 许可证

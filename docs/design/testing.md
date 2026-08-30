@@ -1,6 +1,6 @@
 # 测试体系设计
 
-> Merged from changes/001, 003, 005, 006
+> Merged from changes/001, 003, 005, 006, 007
 
 ## 1. 框架与入口
 
@@ -21,7 +21,8 @@
 | tests/test_codec_opus.py | 可用性探测与降级、roundtrip、VBR 变长、PLC 空帧、reset |
 | tests/test_transmission.py | PTT 完成边界、冲突隔离、事件不可变模型与消费者隔离 |
 | tests/test_echo_service.py | Echo 路由申请、固定 streamBeginUTC、头重写、截断、抢占与立即取消 |
-| tests/test_repeater_service.py | 组合根、EchoService 业务身份、幂等/信号停机 |
+| tests/test_mqtt_transport.py | Paho 连接配置、QoS、发布成功/失败/超时/取消、quiesce 与断连顺序 |
+| tests/test_repeater_service.py | 组合根、非主线程构造、幂等停机及消费者退出后断连 |
 | tests/test_config.py | deep_merge、默认值、加载合并、校验矩阵（vendor、Echo UID/前缀等）、示例配置有效性 |
 | tests/test_event_log.py | JSONL 写入/解析、no-op、目录创建、轮转、Unicode |
 | tests/test_integration_mqtt.py | **集成**（marker=integration，默认排除）：broker 连接回环、Echo 端到端重放、SIGTERM 优雅停止 |

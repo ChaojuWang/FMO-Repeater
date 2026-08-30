@@ -98,6 +98,7 @@ def service_config(tmp_path):
         'mqtt': {
             'broker': 'test', 'port': 1883, 'username': '', 'password': '',
             'client_id_prefix': 'test_fmo', 'keepalive': 60,
+            'qos': 0, 'publish_timeout': 5.0,
         },
         'topics': {'subscribe': 'TEST/FMO/RAW', 'publish': 'TEST/FMO/RAW'},
         'transmission': {

@@ -12,6 +12,7 @@ FMO Repeater 服务主入口
 import os
 import sys
 import argparse
+import signal
 import time
 
 from fmo_repeater.service.config import (
@@ -41,24 +42,37 @@ def run_service(config_file: str = 'config.yaml'):
     # 创建并启动服务
     service = RepeaterService(config)
 
+    def handle_signal(signum, frame):
+        service.request_shutdown(f"signal:{signum}")
+
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
     try:
         # 连接 MQTT
         service.connect()
 
         # 等待连接建立
         timeout = 10
-        start_time = time.time()
-        while not service.connected and time.time() - start_time < timeout:
+        start_time = time.monotonic()
+        while (
+            not service.connected
+            and not service.shutdown_requested
+            and time.monotonic() - start_time < timeout
+        ):
             time.sleep(0.1)
 
+        if service.shutdown_requested:
+            service.stop()
+            return
         if not service.connected:
-            service.logger.error("连接 MQTT 超时")
-            sys.exit(1)
+            raise TimeoutError("连接 MQTT 超时")
 
         # 运行服务
         service.run()
 
     except Exception as e:
+        service.stop()
         print(f"启动服务失败: {e}")
         import traceback
         traceback.print_exc()

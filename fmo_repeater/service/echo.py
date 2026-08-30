@@ -6,8 +6,6 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
-from paho.mqtt import client as mqtt_client
-
 from ..protocol import ChannelCoordinator, MessageHeader, PacketParser
 from .event_log import EventLog
 from .logging_setup import setup_logging
@@ -37,7 +35,7 @@ class EchoService:
         self.replay_uid = echo_cfg["uid"]
         self.callsign_prefix = echo_cfg["callsign_prefix"]
         self.max_duration = float(echo_cfg.get("max_duration", 30.0))
-        self.mqtt_client = None
+        self.transport = None
         self._stop = threading.Event()
         self._lease_lock = threading.Lock()
         self._active_lease = None
@@ -120,11 +118,9 @@ class EchoService:
             try:
                 parsed = PacketParser.parse(timed_packet.payload)
                 payload = self._rewrite_packet(parsed, replay_stream_begin)
-                accepted, result = lease.publish(
+                accepted, ticket = lease.publish(
                     time.monotonic(),
-                    lambda: self.mqtt_client.publish(
-                        self.config["topics"]["publish"], payload
-                    ),
+                    lambda: self.transport.submit(payload),
                 )
                 if not accepted:
                     reason = "preempted"
@@ -135,16 +131,21 @@ class EchoService:
                         published=success,
                     )
                     break
-                assert result is not None
-                if result.rc == mqtt_client.MQTT_ERR_SUCCESS:
+                assert ticket is not None
+                outcome = self.transport.wait_for_publish(ticket, self._stop)
+                if outcome.success:
                     success += 1
+                elif outcome.reason == "cancelled":
+                    reason = "shutdown"
+                    break
                 else:
                     failed += 1
                     self.logger.warning(
-                        "发布回音包 [%d/%d] 失败，返回码: %s",
+                        "发布回音包 [%d/%d] 失败，原因: %s，返回码: %s",
                         index + 1,
                         len(packets),
-                        result.rc,
+                        outcome.reason,
+                        outcome.rc,
                     )
             except Exception:
                 failed += 1

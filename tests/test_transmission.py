@@ -175,3 +175,24 @@ def test_stopped_event_bus_rejects_late_publish():
     bus.publish(event)
     time.sleep(0.02)
     assert delivered == []
+
+
+def test_event_bus_reports_consumer_join_timeout():
+    bus = TransmissionEventBus(logging.getLogger("test-timeout-bus"))
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking(event):
+        entered.set()
+        release.wait(1.0)
+
+    bus.subscribe("blocking", blocking)
+    bus.start()
+    event = TransmissionCompleted(1, 2, "T", 3, 0.0, 0.0, (), "idle_timeout")
+    bus.publish(event)
+    assert entered.wait(1.0)
+    assert bus.stop(timeout=0.01) is False
+    release.set()
+    subscription = bus._subscriptions[0]
+    subscription.thread.join(timeout=1.0)
+    assert subscription.thread.is_alive() is False

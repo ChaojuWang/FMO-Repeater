@@ -85,7 +85,7 @@ class TransmissionEventBus:
                     target=self._run_subscription,
                     args=(subscription,),
                     name=f"fmo-consumer-{subscription.name}",
-                    daemon=True,
+                    daemon=False,
                 )
                 subscription.thread.start()
 
@@ -107,20 +107,30 @@ class TransmissionEventBus:
         for subscription in subscriptions:
             subscription.inbox.put_nowait(transmission)
 
-    def stop(self, cancel_pending: bool = True, timeout: float = 5.0) -> None:
+    def stop(
+        self, cancel_pending: bool = True, timeout: Optional[float] = None
+    ) -> bool:
         with self._lock:
             self._accepting = False
             if not self._started:
-                return
+                return True
             subscriptions = tuple(self._subscriptions)
             self._started = False
         for subscription in subscriptions:
             if cancel_pending:
                 _drain(subscription.inbox)
             subscription.inbox.put_nowait(_STOP)
+        deadline = None if timeout is None else time.monotonic() + timeout
         for subscription in subscriptions:
             if subscription.thread is not None:
-                subscription.thread.join(timeout=timeout)
+                remaining = (
+                    None if deadline is None else max(0.0, deadline - time.monotonic())
+                )
+                subscription.thread.join(timeout=remaining)
+        return all(
+            subscription.thread is None or not subscription.thread.is_alive()
+            for subscription in subscriptions
+        )
 
 
 @dataclass
@@ -164,7 +174,7 @@ class TransmissionProducer:
             return
         self._stop.clear()
         self._thread = threading.Thread(
-            target=self._run, name="fmo-transmission-producer", daemon=True
+            target=self._run, name="fmo-transmission-producer", daemon=False
         )
         self._thread.start()
 
@@ -347,7 +357,7 @@ class TransmissionProducer:
             except Exception:
                 self.logger.exception("处理 MQTT 语音包时发生未预期错误")
 
-    def stop(self, timeout: float = 5.0) -> None:
+    def stop(self, timeout: Optional[float] = None) -> bool:
         """立即取消：丢弃输入队列和未完成 PTT，不冲刷事件。"""
         self._stop.set()
         _drain(self._inbox)
@@ -355,6 +365,8 @@ class TransmissionProducer:
         self._inbox.put_nowait(_STOP)
         if self._thread is not None:
             self._thread.join(timeout=timeout)
+            return not self._thread.is_alive()
+        return True
 
 
 def _drain(inbox: queue.Queue) -> None:
