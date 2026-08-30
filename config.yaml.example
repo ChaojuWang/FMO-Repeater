@@ -15,6 +15,8 @@ mqtt:
   password: "your_password"        # 密码
   client_id_prefix: "fmo_repeater" # 客户端 ID 前缀，实际 ID 为 prefix_随机数
   keepalive: 60                    # 保持连接的心跳间隔（秒）
+  qos: 0                           # 发布/订阅 QoS：0/1/2；默认 0 保持低延迟兼容
+  publish_timeout: 5.0             # 等待 Paho 发布完成的最长秒数
 
 # 主题配置
 topics:

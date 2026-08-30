@@ -107,6 +107,20 @@ class TestValidateConfig:
         with pytest.raises(ValueError, match="port"):
             validate_config(cfg)
 
+    @pytest.mark.parametrize("value", [-1, 3, "0", True])
+    def test_bad_mqtt_qos(self, value):
+        cfg = self._base()
+        cfg['mqtt']['qos'] = value
+        with pytest.raises(ValueError, match="qos"):
+            validate_config(cfg)
+
+    @pytest.mark.parametrize("value", [0, -1, "5", True])
+    def test_bad_publish_timeout(self, value):
+        cfg = self._base()
+        cfg['mqtt']['publish_timeout'] = value
+        with pytest.raises(ValueError, match="publish_timeout"):
+            validate_config(cfg)
+
     def test_bad_timeout(self):
         cfg = self._base()
         cfg['transmission']['idle_timeout'] = -1

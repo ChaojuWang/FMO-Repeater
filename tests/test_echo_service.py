@@ -3,24 +3,23 @@
 import threading
 
 from fmo_repeater.protocol import ChannelCoordinator, PacketParser
-from fmo_repeater.service import EchoService
+from fmo_repeater.service import EchoService, PublishOutcome
 from fmo_repeater.service.transmission import TimedPacket, TransmissionCompleted
 
 
-class MockMQTTClient:
+class MockTransport:
     def __init__(self, on_publish=None):
         self.published = []
         self.on_publish = on_publish
 
-    def publish(self, topic, payload):
-        self.published.append((topic, payload))
+    def submit(self, payload):
+        self.published.append(payload)
         if self.on_publish:
             self.on_publish()
+        return object()
 
-        class Result:
-            rc = 0
-
-        return Result()
+    def wait_for_publish(self, ticket, cancel=None):
+        return PublishOutcome(True, "published", 0)
 
 
 def make_event(payloads, offsets=None):
@@ -40,7 +39,7 @@ def make_event(payloads, offsets=None):
 def make_echo(service_config, coordinator=None):
     coordinator = coordinator or ChannelCoordinator()
     echo = EchoService(service_config, coordinator)
-    echo.mqtt_client = MockMQTTClient()
+    echo.transport = MockTransport()
     return echo, coordinator
 
 
@@ -60,7 +59,7 @@ def test_replay_rewrites_headers_and_preserves_frames(service_config, make_packe
     echo, _ = make_echo(service_config)
     original = make_packet(uid=42, callsign="FMOTEST", n_frames=2)
     echo.handle(make_event([original]))
-    rewritten = PacketParser.parse(echo.mqtt_client.published[0][1])
+    rewritten = PacketParser.parse(echo.transport.published[0])
     parsed = PacketParser.parse(original)
     assert rewritten.header.vendor == 0x2000
     assert rewritten.header.uid == 65535
@@ -73,7 +72,7 @@ def test_one_replay_uses_one_stream_begin(service_config, make_packet):
     echo, _ = make_echo(service_config)
     packets = [make_packet(uid=42), make_packet(uid=42)]
     echo.handle(make_event(packets))
-    parsed = [PacketParser.parse(payload) for _, payload in echo.mqtt_client.published]
+    parsed = [PacketParser.parse(payload) for payload in echo.transport.published]
     assert len(parsed) == 2
     assert parsed[0].header.stream_begin_utc == parsed[1].header.stream_begin_utc
 
@@ -86,7 +85,7 @@ def test_busy_channel_rejects_echo_without_queueing(service_config, make_packet)
     now = time.monotonic()
     coordinator.accept_network_packet(7, 1000, now)
     echo.handle(make_event([make_packet()]))
-    assert echo.mqtt_client.published == []
+    assert echo.transport.published == []
 
 
 def test_max_duration_truncates_echo_only(service_config, make_packet):
@@ -94,7 +93,7 @@ def test_max_duration_truncates_echo_only(service_config, make_packet):
     echo, _ = make_echo(service_config)
     packets = [make_packet(), make_packet(), make_packet()]
     echo.handle(make_event(packets, [0.0, 1.0, 2.0]))
-    assert len(echo.mqtt_client.published) == 2
+    assert len(echo.transport.published) == 2
 
 
 def test_network_preemption_stops_remaining_echo(service_config, make_packet):
@@ -109,8 +108,8 @@ def test_network_preemption_stops_remaining_echo(service_config, make_packet):
             1, (route.stream_begin_utc - 1) & 0xFFFFFFFF, route.last_activity + 0.01
         )
 
-    client = MockMQTTClient(first_published.set)
-    echo.mqtt_client = client
+    client = MockTransport(first_published.set)
+    echo.transport = client
     preempt_thread = threading.Thread(target=preempt_after_first)
     preempt_thread.start()
     echo.handle(make_event([make_packet(), make_packet()], [0.0, 0.05]))
@@ -124,11 +123,34 @@ def test_stop_interrupts_replay_wait_immediately(service_config, make_packet):
     thread = threading.Thread(target=echo.handle, args=(event,))
     thread.start()
     for _ in range(100):
-        if echo.mqtt_client.published:
+        if echo.transport.published:
             break
         import time
         time.sleep(0.005)
     echo.stop()
     thread.join(timeout=0.5)
     assert thread.is_alive() is False
-    assert len(echo.mqtt_client.published) == 1
+    assert len(echo.transport.published) == 1
+
+
+def test_stop_cancels_publish_confirmation(service_config, make_packet):
+    class BlockingTransport(MockTransport):
+        def __init__(self):
+            super().__init__()
+            self.waiting = threading.Event()
+
+        def wait_for_publish(self, ticket, cancel=None):
+            self.waiting.set()
+            assert cancel.wait(1.0)
+            return PublishOutcome(False, "cancelled", 0)
+
+    echo, _ = make_echo(service_config)
+    echo.transport = BlockingTransport()
+    thread = threading.Thread(
+        target=echo.handle, args=(make_event([make_packet()]),)
+    )
+    thread.start()
+    assert echo.transport.waiting.wait(1.0)
+    echo.stop()
+    thread.join(timeout=0.5)
+    assert thread.is_alive() is False

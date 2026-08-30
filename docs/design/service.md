@@ -1,11 +1,12 @@
 # 服务层设计
 
-> Merged from changes/001, 003, 004, 005, 006
+> Merged from changes/001, 003, 004, 005, 006, 007
 
 ## 1. 配置
 
 ```yaml
-mqtt: {broker, port, username, password, client_id_prefix, keepalive}
+mqtt: {broker, port, username, password, client_id_prefix, keepalive,
+       qos: 0, publish_timeout: 5.0}
 topics: {subscribe, publish}
 transmission:
   idle_timeout: 2.0
@@ -73,14 +74,25 @@ header.vendor 必须先等于 Echo vendor；其后 UID 等于配置的非零 Ech
 以前缀开头，即判定为本机回环。过滤发生在网络仲裁前，因为本地路由已在发布前
 登记。Echo 回放使用 `replay_*` 事件记录，不产生新的完成事件，避免递归。
 
-## 4. RepeaterService
+## 4. MqttTransport
 
-组合并启动 ChannelCoordinator、TransmissionEventBus、TransmissionProducer 和
-EchoService；处理 Paho MQTT VERSION2 回调及信号。停机是幂等的立即取消：不冲刷
-未完成 PTT，不等待待播事件；顺序为禁用 Echo、关闭事件总线、停止生产者、断开
-MQTT。已经交给 MQTT 客户端的包不撤回。
+`MqttTransport` 唯一持有 Paho Client，负责连接、订阅、回调入队、发布完成等待和
+断连。回调一进入即记录 monotonic 接收时间。Echo 在路由租约临界区内只提交
+`publish`，随后在锁外用最多 100ms 的等待片段检查 Paho 完成、总超时和关闭取消。
 
-## 5. 结构化事件
+QoS 默认 0 以保持实时语音兼容，可配置 0/1/2；`publish_timeout` 必须为正数。
+QoS 0 的完成表示消息离开客户端，QoS 1/2 分别等待对应 MQTT 握手。失败不重试，
+避免迟到语音。当前 FMO 网络使用明文 MQTT，本版本不提供 TLS 配置。
+
+## 5. RepeaterService
+
+组合并启动 MqttTransport、ChannelCoordinator、TransmissionEventBus、
+TransmissionProducer 和 EchoService。进程信号只在 `main.py` 注册，服务可在任意
+线程构造。停机是幂等的立即取消：transport quiesce → Echo cancel → 清空并等待
+事件消费者 → 停止生产者 → MQTT disconnect。消费者和生产者是非 daemon 线程，
+断连前必须确认退出；已经由 Paho 确认完成的包不撤回。
+
+## 6. 结构化事件
 
 | 类别 | 事件 |
 |---|---|
@@ -93,7 +105,7 @@ MQTT。已经交给 MQTT 客户端的包不撤回。
 `stream_end` 包含 `packets/duration_s/reason`，其中 duration 是网络接收跨度。
 `replay_finished` 包含成功、失败、截断、丢弃数和完成原因。
 
-## 6. 守护进程
+## 7. 守护进程
 
 `daemon.py` 保持 Unix 双 fork、PID 文件和 start/stop/restart/status 管理；CLI 入口
 构造 `RepeaterService`。

@@ -18,6 +18,7 @@ from .transmission import (
     TransmissionEventBus,
     TransmissionProducer,
 )
+from .mqtt_transport import MqttTransport, PublishOutcome
 from .daemon import Daemon
 
 __all__ = [
@@ -35,5 +36,7 @@ __all__ = [
     "TransmissionConsumer",
     "TransmissionEventBus",
     "TransmissionProducer",
+    "MqttTransport",
+    "PublishOutcome",
     "Daemon",
 ]

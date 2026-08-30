@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import random
-import signal
 import time
 from typing import Any, Dict, Optional
-
-from paho.mqtt import client as mqtt_client
-import paho.mqtt.enums
 
 from ..protocol import ChannelCoordinator
 from .echo import EchoService
 from .event_log import EventLog
 from .logging_setup import setup_logging
+from .mqtt_transport import MqttTransport
 from .transmission import TransmissionEventBus, TransmissionProducer
 
 
@@ -41,13 +37,25 @@ class RepeaterService:
             own_replay_filter=self.echo.is_own_replay,
         )
         self.event_bus.subscribe("echo", self.echo.handle)
-        self.mqtt_client = None
-        self.connected = False
+        self.transport = MqttTransport(
+            config,
+            on_payload=self.producer.submit,
+            on_connected=self._on_connected,
+            on_disconnected=self._on_disconnected,
+            logger=self.logger,
+        )
+        self.echo.transport = self.transport
         self.running = False
         self._stopped = False
         self._shutdown_requested = False
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
+
+    @property
+    def connected(self) -> bool:
+        return self.transport.connected
+
+    @property
+    def shutdown_requested(self) -> bool:
+        return self._shutdown_requested
 
     @property
     def invalid_packets(self) -> int:
@@ -57,14 +65,8 @@ class RepeaterService:
     def loop_packets(self) -> int:
         return self.producer.loop_packets
 
-    def _on_connect(self, client, userdata, flags, reason_code, properties):
-        if reason_code != 0:
-            self.connected = False
-            self.logger.error("连接 MQTT 代理失败，返回码: %s", reason_code)
-            return
-        self.connected = True
+    def _on_connected(self) -> None:
         topic = self.config["topics"]["subscribe"]
-        client.subscribe(topic)
         self.event_log.log(
             "service_started",
             version=1,
@@ -74,36 +76,14 @@ class RepeaterService:
         )
         self.logger.info("已订阅主题: %s", topic)
 
-    def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties):
-        self.connected = False
+    def _on_disconnected(self, reason_code) -> None:
         if reason_code == 0:
             self.logger.info("已主动断开 MQTT 连接")
         else:
             self.logger.warning("MQTT 连接断开，原因码: %s", reason_code)
 
-    def _on_message(self, client, userdata, msg):
-        try:
-            self.producer.submit(msg.payload, time.monotonic())
-        except Exception:
-            self.logger.exception("MQTT 回调入队失败")
-
     def connect(self) -> None:
-        client_id = "%s_%d" % (
-            self.config["mqtt"]["client_id_prefix"], random.randint(0, 10000)
-        )
-        client = mqtt_client.Client(
-            paho.mqtt.enums.CallbackAPIVersion.VERSION2, client_id
-        )
-        client.on_connect = self._on_connect
-        client.on_disconnect = self._on_disconnect
-        client.on_message = self._on_message
-        mqtt_cfg = self.config["mqtt"]
-        if mqtt_cfg["username"]:
-            client.username_pw_set(mqtt_cfg["username"], mqtt_cfg["password"])
-        self.mqtt_client = client
-        self.echo.mqtt_client = client
-        client.connect(mqtt_cfg["broker"], mqtt_cfg["port"], mqtt_cfg["keepalive"])
-        client.loop_start()
+        self.transport.connect()
 
     def run(self) -> None:
         if self._shutdown_requested:
@@ -122,8 +102,8 @@ class RepeaterService:
         finally:
             self.stop()
 
-    def _signal_handler(self, signum, frame):
-        self.logger.info("接收到信号 %s，立即停止服务", signum)
+    def request_shutdown(self, reason="requested") -> None:
+        self.logger.info("收到停止请求（%s），立即停止服务", reason)
         self._shutdown_requested = True
         self.running = False
 
@@ -133,11 +113,12 @@ class RepeaterService:
         self._stopped = True
         self._shutdown_requested = True
         self.running = False
+        self.transport.quiesce()
         self.echo.stop()
-        self.event_bus.stop(cancel_pending=True)
-        self.producer.stop()
-        if self.mqtt_client is not None:
-            self.mqtt_client.loop_stop()
-            self.mqtt_client.disconnect()
-        self.event_log.log("service_stopped", reason="signal")
+        bus_stopped = self.event_bus.stop(cancel_pending=True, timeout=None)
+        producer_stopped = self.producer.stop(timeout=None)
+        if not bus_stopped or not producer_stopped:
+            raise RuntimeError("业务线程未能在 MQTT 断开前停止")
+        self.transport.disconnect()
+        self.event_log.log("service_stopped", reason="shutdown")
         self.logger.info("FMO Repeater 服务已停止")

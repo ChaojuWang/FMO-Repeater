@@ -25,6 +25,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         'password': '',
         'client_id_prefix': 'fmo_repeater',
         'keepalive': 60,
+        'qos': 0,
+        'publish_timeout': 5.0,
     },
     'topics': {
         'subscribe': 'FMO/RAW',
@@ -116,7 +118,15 @@ def validate_config(config: Dict[str, Any]) -> bool:
         raise ValueError("MQTT broker 地址不能为空")
     if not isinstance(mqtt.get('port'), int) or not (1 <= mqtt['port'] <= 65535):
         raise ValueError("MQTT port 必须是 1-65535 之间的整数")
-
+    if isinstance(mqtt.get('qos'), bool) or mqtt.get('qos') not in (0, 1, 2):
+        raise ValueError("MQTT qos 必须是 0、1 或 2")
+    publish_timeout = mqtt.get('publish_timeout')
+    if (
+        not isinstance(publish_timeout, (int, float))
+        or isinstance(publish_timeout, bool)
+        or publish_timeout <= 0
+    ):
+        raise ValueError("MQTT publish_timeout 必须是大于 0 的数值")
     # 主题
     topics = config['topics']
     if not topics.get('subscribe'):
