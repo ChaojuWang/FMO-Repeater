@@ -1,6 +1,6 @@
 # 服务层设计
 
-> Merged from changes/001, 003, 004, 005, 006, 007
+> Merged from changes/001, 003, 004, 005, 006, 007, 008
 
 ## 1. 配置
 
@@ -107,5 +107,28 @@ TransmissionProducer 和 EchoService。进程信号只在 `main.py` 注册，服
 
 ## 7. 守护进程
 
-`daemon.py` 保持 Unix 双 fork、PID 文件和 start/stop/restart/status 管理；CLI 入口
-构造 `RepeaterService`。
+> Merged from changes/008
+
+`daemon.py` 保持 Unix 双 fork 守护进程化；CLI 入口构造 `RepeaterService`。
+
+**PID 文件生命周期**（前台与守护模式共用）：
+
+- PID 文件默认固定 `/tmp/fmo_repeater.pid`（普通用户可写），CLI 两级解析：
+  `--pid-file` 显式指定 > 固定默认值。配置文件不承载 daemon 节，旧配置中的
+  `daemon` 节被忽略；守护模式由显式 `start --daemon` 控制。
+- 启动前 `acquire`：PID 文件指向活跃进程 → 拒绝启动（防双实例）；指向已死亡
+  进程 → 视为 stale，删除后继续。前台模式在 `finally` 中释放，守护模式由
+  `atexit` 清理。
+- `release` 仅当文件指向**仍存活**的其他进程时拒绝删除，避免误删新实例登记。
+
+**stop / restart**：
+
+- `stop` 只发送一次 SIGTERM，用 monotonic 时钟做有界等待（默认 5s，轮询
+  50ms）；超时返回失败，不默认 SIGKILL（是否强制终止留给运维）。stale PID
+  直接清理且不发信号。
+- `restart` 仅当 `stop` 确认旧进程退出后才启动；超时则取消重启，避免新旧
+  实例叠加。
+
+被否决的备选（决策留痕，详见 changes/008/design.md 第 3 节）：flock 独占锁
+（毫秒级竞态窗口收益不抵复杂度）、starttime 身份指纹（tmpfs 重启即清空，
+复用误杀窗口小）、ProcessOps 注入抽象层（monkeypatch 已覆盖测试需求）。

@@ -51,12 +51,12 @@ logging:
   max_bytes: 10485760               # 单个日志文件最大大小（10MB）
   backup_count: 5                   # 保留的日志文件备份数量
 
-# 守护进程配置
-daemon:
-  enabled: false                    # 是否启用守护进程模式
-  pid_file: "/var/run/fmo_repeater.pid" # PID 文件路径（仅守护进程模式使用）
-
 # 使用说明：
 # 1. 复制此文件：cp config.yaml.example config.yaml
 # 2. 编辑 config.yaml，填入实际的配置信息
 # 3. 运行服务：python main.py start
+#
+# 守护进程说明（changes/008）：
+# - 守护模式由显式命令控制：python main.py start --daemon
+# - PID 文件由 CLI --pid-file 控制，默认 /tmp/fmo_repeater.pid；
+#   本配置文件不再承载 daemon 节（旧文件中的 daemon 节会被忽略）

@@ -28,7 +28,7 @@ class TestDefaultConfig:
     def test_defaults_complete(self):
         for section in (
             'mqtt', 'topics', 'transmission', 'echo',
-            'event_log', 'logging', 'daemon',
+            'event_log', 'logging',
         ):
             assert section in DEFAULT_CONFIG
         assert DEFAULT_CONFIG['transmission']['idle_timeout'] == 2.0
@@ -38,6 +38,10 @@ class TestDefaultConfig:
         assert DEFAULT_CONFIG['echo']['callsign_prefix'] == 'RE>'
         assert DEFAULT_CONFIG['echo']['max_duration'] == 30.0
         assert DEFAULT_CONFIG['event_log']['enabled'] is True
+
+    def test_daemon_section_removed(self):
+        """changes/008：daemon 节不再作为配置事实源，PID 文件由 CLI 管理"""
+        assert 'daemon' not in DEFAULT_CONFIG
 
     def test_default_config_valid(self):
         assert validate_config(DEFAULT_CONFIG) is True

@@ -1,18 +1,59 @@
-"""
-守护进程模块
+"""守护进程模块
 
-提供 Unix 守护进程化功能，支持：
-- 将进程转为后台守护进程
-- PID 文件管理
-- 信号处理
+提供 Unix 守护进程化功能：
+- 将进程转为后台守护进程（双重 fork）
+- PID 文件生命周期（acquire / release / stop / restart / status）
 
-（自旧 daemon.py 原样迁移，见 docs/design/legacy/legacy-system.md）
+PID 管理原则（changes/008）：
+- PID 文件默认固定 /tmp/fmo_repeater.pid，前台与守护模式共用
+- 启动前 acquire：活跃实例存在则拒绝，stale（进程已死）则清理
+- stop 只发送一次 SIGTERM，monotonic 有界等待；超时返回失败，不 SIGKILL
+- restart 仅在确认旧进程退出后启动
 """
 
 import os
 import sys
 import atexit
 import signal
+import time
+from typing import Optional
+
+# stop 等待旧进程退出的默认上限（秒）
+STOP_TIMEOUT = 5.0
+# 轮询进程存活的间隔（秒）
+STOP_POLL_INTERVAL = 0.05
+
+
+def pid_alive(pid: int) -> bool:
+    """探测进程是否存活（signal 0 只做存在性检查，不真正发送信号）"""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # 进程存在但属于其他用户：视为存活，避免误判
+        return True
+    except OSError:
+        return False
+
+
+def read_pid_file(pid_file: str) -> Optional[int]:
+    """读取 PID 文件，返回 PID；文件不存在或内容无效返回 None"""
+    try:
+        with open(pid_file, 'r', encoding='utf-8') as f:
+            return int(f.read().strip())
+    except (IOError, OSError, ValueError):
+        return None
+
+
+def resolve_pid_file(cli_value: Optional[str], default: str) -> str:
+    """PID 文件两级解析：--pid-file 显式指定 > 固定默认值"""
+    if cli_value:
+        return cli_value
+    return default
 
 
 class Daemon:
@@ -39,11 +80,54 @@ class Daemon:
         self.pid_file = pid_file
         self.working_dir = working_dir
 
+    # ------------------------------------------------------------------
+    # PID 文件生命周期
+    # ------------------------------------------------------------------
+
+    def acquire_pid_file(self) -> bool:
+        """登记 PID：活跃实例存在则拒绝，stale 清理后写入当前 PID
+
+        Returns:
+            bool: 登记成功返回 True；已有活跃实例返回 False
+        """
+        pid = read_pid_file(self.pid_file)
+        if pid is not None:
+            if pid == os.getpid():
+                # 自己已登记（重复 acquire），视为成功
+                return True
+            if pid_alive(pid):
+                return False
+            # stale：进程已死亡，清理后继续
+            self.release_pid_file()
+
+        pid_dir = os.path.dirname(self.pid_file)
+        if pid_dir and not os.path.exists(pid_dir):
+            os.makedirs(pid_dir, exist_ok=True)
+        with open(self.pid_file, 'w', encoding='utf-8') as f:
+            f.write(f"{os.getpid()}\n")
+        return True
+
+    def release_pid_file(self) -> None:
+        """删除 PID 文件；仅当内容指向仍存活的其他进程时不误删"""
+        pid = read_pid_file(self.pid_file)
+        if pid is not None and pid != os.getpid() and pid_alive(pid):
+            # PID 文件指向活跃的其他实例，不误删
+            return
+        try:
+            os.remove(self.pid_file)
+        except OSError:
+            pass
+
+    # ------------------------------------------------------------------
+    # 守护进程化
+    # ------------------------------------------------------------------
+
     def daemonize(self):
         """
         守护进程化
 
         执行双重 fork 和其他守护进程初始化步骤。
+        前置条件：调用方已通过 acquire_pid_file 登记成功。
         """
         # 第一次 fork
         try:
@@ -83,48 +167,13 @@ class Daemon:
             os.dup2(devnull_w.fileno(), sys.stdout.fileno())
             os.dup2(devnull_w.fileno(), sys.stderr.fileno())
 
-        # 注册退出时删除 PID 文件的函数
-        atexit.register(self.delete_pid_file)
+        # fork 后 PID 已变化，重写 PID 文件并注册退出清理
+        self.acquire_pid_file()
+        atexit.register(self.release_pid_file)
 
-        # 写入 PID 文件
-        self.write_pid_file()
-
-    def write_pid_file(self):
-        """
-        写入 PID 文件
-        """
-        pid = str(os.getpid())
-        try:
-            # 确保 PID 文件目录存在
-            pid_dir = os.path.dirname(self.pid_file)
-            if pid_dir and not os.path.exists(pid_dir):
-                os.makedirs(pid_dir, exist_ok=True)
-
-            with open(self.pid_file, 'w+') as f:
-                f.write(f"{pid}\n")
-        except Exception as e:
-            sys.stderr.write(f"无法写入 PID 文件 {self.pid_file}: {e}\n")
-            sys.exit(1)
-
-    def delete_pid_file(self):
-        """
-        删除 PID 文件
-        """
-        if os.path.exists(self.pid_file):
-            os.remove(self.pid_file)
-
-    def get_pid_from_file(self):
-        """
-        从 PID 文件读取进程 ID
-
-        Returns:
-            int or None: 进程 ID，如果文件不存在或无效则返回 None
-        """
-        try:
-            with open(self.pid_file, 'r') as f:
-                return int(f.read().strip())
-        except (IOError, ValueError):
-            return None
+    # ------------------------------------------------------------------
+    # start / stop / restart / status
+    # ------------------------------------------------------------------
 
     def start(self, target_func, *args, **kwargs):
         """
@@ -134,112 +183,108 @@ class Daemon:
             target_func: 要作为守护进程运行的函数
             *args: 传递给目标函数的位置参数
             **kwargs: 传递给目标函数的关键字参数
+
+        Raises:
+            SystemExit: 已有活跃实例时以非零码退出
         """
-        # 检查 PID 文件是否存在
-        if self.get_pid_from_file():
-            sys.stderr.write(f"PID 文件 {self.pid_file} 已存在，守护进程可能已在运行\n")
+        if not self.acquire_pid_file():
+            sys.stderr.write(
+                f"PID 文件 {self.pid_file} 指向活跃进程，"
+                f"守护进程可能已在运行\n"
+            )
             sys.exit(1)
 
-        # 守护进程化
         self.daemonize()
 
         # 运行目标函数
         target_func(*args, **kwargs)
 
-    def stop(self):
+    def stop(self, timeout: float = STOP_TIMEOUT) -> bool:
+        """停止守护进程：只发送一次 SIGTERM，monotonic 有界等待
+
+        stale PID（进程已死亡）直接清理并返回成功，不发送信号。
+
+        Returns:
+            bool: 已停止（或本就未运行）返回 True；等待超时返回 False
         """
-        停止守护进程
+        pid = read_pid_file(self.pid_file)
+        if pid is None:
+            print(f"PID 文件 {self.pid_file} 不存在，守护进程未运行")
+            return True
 
-        向守护进程发送 SIGTERM 信号。
-        """
-        # 从 PID 文件获取进程 ID
-        pid = self.get_pid_from_file()
+        if not pid_alive(pid):
+            # stale：进程已死亡，清理残留文件
+            self.release_pid_file()
+            print(f"清理残留 PID 文件（进程 {pid} 已退出）")
+            return True
 
-        if not pid:
-            sys.stderr.write(f"PID 文件 {self.pid_file} 不存在，守护进程未运行？\n")
-            return
-
-        # 尝试杀死进程
+        # 只发送一次 SIGTERM
         try:
-            while True:
-                os.kill(pid, signal.SIGTERM)
-                import time
-                time.sleep(0.1)
+            os.kill(pid, signal.SIGTERM)
+        except PermissionError as e:
+            print(f"停止守护进程失败（权限不足）: {e}")
+            return False
+        except ProcessLookupError:
+            # 信号发出前进程恰好退出
+            self.release_pid_file()
+            print("守护进程已停止")
+            return True
         except OSError as e:
-            error_str = str(e)
-            if 'No such process' in error_str:
-                # 进程已不存在，删除 PID 文件
-                if os.path.exists(self.pid_file):
-                    os.remove(self.pid_file)
-                print(f"守护进程已停止")
-            else:
-                print(f"停止守护进程失败: {error_str}")
-                sys.exit(1)
+            print(f"停止守护进程失败: {e}")
+            return False
+
+        # monotonic 有界等待目标退出
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not pid_alive(pid):
+                self.release_pid_file()
+                print("守护进程已停止")
+                return True
+            time.sleep(STOP_POLL_INTERVAL)
+
+        # 超时返回失败；是否 SIGKILL 由运维决定
+        print(
+            f"等待守护进程（PID: {pid}）退出超时（{timeout}s），"
+            f"未发送 SIGKILL"
+        )
+        return False
 
     def restart(self, target_func, *args, **kwargs):
-        """
-        重启守护进程
-
-        Args:
-            target_func: 要作为守护进程运行的函数
-            *args: 传递给目标函数的位置参数
-            **kwargs: 传递给目标函数的关键字参数
-        """
-        self.stop()
-        import time
-        time.sleep(1)  # 等待进程完全停止
+        """重启守护进程：仅在确认旧进程退出后才启动新进程"""
+        if not self.stop():
+            print("旧进程未退出，取消重启")
+            sys.exit(1)
         self.start(target_func, *args, **kwargs)
 
-    def status(self):
-        """
-        检查守护进程状态
-        """
-        pid = self.get_pid_from_file()
+    def status(self) -> bool:
+        """检查守护进程状态；stale PID 文件自动清理
 
-        if not pid:
+        Returns:
+            bool: 正在运行返回 True
+        """
+        pid = read_pid_file(self.pid_file)
+
+        if pid is None:
             print(f"守护进程未运行（PID 文件 {self.pid_file} 不存在）")
             return False
 
-        # 检查进程是否存在
-        try:
-            # 发送信号 0 不会真正发送信号，只是检查进程是否存在
-            os.kill(pid, 0)
-            print(f"守护进程正在运行（PID: {pid}）")
-            return True
-        except OSError:
-            print(f"守护进程未运行（但 PID 文件存在，可能是异常退出）")
+        if not pid_alive(pid):
+            self.release_pid_file()
+            print(
+                f"守护进程未运行（残留 PID 文件已清理，"
+                f"原 PID: {pid}）"
+            )
             return False
+
+        print(f"守护进程正在运行（PID: {pid}）")
+        return True
 
 
 if __name__ == '__main__':
-    # 测试代码
-    import time
-
-    def test_daemon():
-        """测试守护进程函数"""
-        with open('/tmp/fmo_repeater_test.log', 'a') as f:
-            for i in range(30):
-                f.write(f"守护进程运行中... {i}\n")
-                f.flush()
-                time.sleep(1)
-
+    # 简单自检（不守护进程化，只验证 PID 文件逻辑）
     daemon = Daemon('/tmp/fmo_repeater_test.pid')
-
-    if len(sys.argv) == 2:
-        if sys.argv[1] == 'start':
-            print("启动测试守护进程...")
-            daemon.start(test_daemon)
-        elif sys.argv[1] == 'stop':
-            print("停止测试守护进程...")
-            daemon.stop()
-        elif sys.argv[1] == 'restart':
-            print("重启测试守护进程...")
-            daemon.restart(test_daemon)
-        elif sys.argv[1] == 'status':
-            daemon.status()
-        else:
-            print(f"未知命令: {sys.argv[1]}")
-            sys.exit(1)
+    if len(sys.argv) == 2 and sys.argv[1] == 'status':
+        daemon.status()
     else:
-        print("用法: python -m fmo_repeater.service.daemon {start|stop|restart|status}")
+        print(f"用法: python -m fmo_repeater.service.daemon status")
         sys.exit(1)

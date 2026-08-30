@@ -49,6 +49,10 @@ python main.py stop | restart | status  # 守护进程管理
 python main.py --generate-config out.yaml  # 生成配置模板
 ```
 
+PID 文件默认 `/tmp/fmo_repeater.pid`（前台与守护模式共用，防止双实例），
+可用 `--pid-file` 覆盖；配置文件不再承载 daemon 节。`stop` 只发送一次
+SIGTERM 并有界等待，超时不自动 SIGKILL。
+
 ## 🧪 测试
 
 ```bash

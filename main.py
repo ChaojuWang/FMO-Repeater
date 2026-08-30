@@ -14,6 +14,7 @@ import sys
 import argparse
 import signal
 import time
+from typing import Optional
 
 from fmo_repeater.service.config import (
     load_config,
@@ -21,15 +22,21 @@ from fmo_repeater.service.config import (
     save_default_config,
 )
 from fmo_repeater.service.repeater import RepeaterService
-from fmo_repeater.service.daemon import Daemon
+from fmo_repeater.service.daemon import Daemon, resolve_pid_file
 
 
-def run_service(config_file: str = 'config.yaml'):
+# PID 文件固定默认值：/tmp 普通用户可写（changes/008）
+DEFAULT_PID_FILE = '/tmp/fmo_repeater.pid'
+
+
+def run_service(config_file: str = 'config.yaml',
+                pid_file: Optional[str] = None):
     """
     运行 FMO Echo 服务（前台模式）
 
     Args:
         config_file: 配置文件路径
+        pid_file: PID 文件路径；None 时使用默认值
     """
     # 加载和验证配置
     try:
@@ -37,6 +44,13 @@ def run_service(config_file: str = 'config.yaml'):
         validate_config(config)
     except Exception as e:
         print(f"配置错误: {e}")
+        sys.exit(1)
+
+    # 前台模式同样登记 PID：防双实例，退出时清理
+    resolved_pid = resolve_pid_file(pid_file, DEFAULT_PID_FILE)
+    daemon = Daemon(resolved_pid, working_dir=os.getcwd())
+    if not daemon.acquire_pid_file():
+        print(f"已有活跃实例（PID 文件 {resolved_pid}），拒绝重复启动")
         sys.exit(1)
 
     # 创建并启动服务
@@ -77,6 +91,8 @@ def run_service(config_file: str = 'config.yaml'):
         import traceback
         traceback.print_exc()
         sys.exit(1)
+    finally:
+        daemon.release_pid_file()
 
 
 def main():
@@ -138,8 +154,8 @@ def main():
 
     parser.add_argument(
         '--pid-file',
-        default='/var/run/fmo_repeater.pid',
-        help='PID 文件路径（守护进程模式，默认: /var/run/fmo_repeater.pid）'
+        default=None,
+        help='PID 文件路径（默认: /tmp/fmo_repeater.pid）'
     )
 
     args = parser.parse_args()
@@ -159,32 +175,36 @@ def main():
         parser.print_help()
         sys.exit(1)
 
+    # PID 文件两级解析：--pid-file 显式指定 > 固定默认值（changes/008）
+    resolved_pid_file = resolve_pid_file(args.pid_file, DEFAULT_PID_FILE)
+
     # 创建守护进程对象，指定工作目录为项目目录
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    daemon = Daemon(args.pid_file, working_dir=current_dir)
+    daemon = Daemon(resolved_pid_file, working_dir=current_dir)
 
     # 执行相应操作
     if args.action == 'start':
         if args.daemon:
             print(f"以守护进程模式启动 FMO Repeater 服务...")
-            print(f"PID 文件: {args.pid_file}")
+            print(f"PID 文件: {resolved_pid_file}")
             print(f"配置文件: {args.config}")
             print(f"日志位置: 请查看配置文件中的 logging.file 设置")
-            daemon.start(run_service, args.config)
+            daemon.start(run_service, args.config, args.pid_file)
         else:
             print(f"启动 FMO Repeater 服务（前台模式）...")
             print(f"配置文件: {args.config}")
             print(f"按 Ctrl+C 停止服务")
             print()
-            run_service(args.config)
+            run_service(args.config, args.pid_file)
 
     elif args.action == 'stop':
         print(f"停止 FMO Repeater 服务...")
-        daemon.stop()
+        if not daemon.stop():
+            sys.exit(1)
 
     elif args.action == 'restart':
         print(f"重启 FMO Repeater 服务...")
-        daemon.restart(run_service, args.config)
+        daemon.restart(run_service, args.config, args.pid_file)
 
     elif args.action == 'status':
         daemon.status()
