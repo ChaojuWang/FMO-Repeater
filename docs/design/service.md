@@ -129,6 +129,26 @@ TransmissionProducer 和 EchoService。进程信号只在 `main.py` 注册，服
 - `restart` 仅当 `stop` 确认旧进程退出后才启动；超时则取消重启，避免新旧
   实例叠加。
 
+**PID 登记时序与失败可见性**（> Merged from changes/009）：
+
+- 守护模式 fork 前只读检查（`check_pid_file`）：活跃实例拒绝、stale/无效
+  内容清理、无文件通过；**fork 前不写入任何 PID**。孙进程在 `daemonize()`
+  末尾无条件以自己的 PID 覆盖登记（`write_pid_file`）。
+- 竞态教训：fork 前写入原进程 PID 会在孙进程重登记时形成「读到尚未退出
+  完的原进程 PID → 误判已有活跃实例 → 静默自杀」的窗口（strace 实测，
+  c0b93da 与 008 均受影响，表现为偶发启动失败且无任何日志）。
+- 失败可见性：`main.py` 守护分支在前台预加载并校验配置；`daemonize`
+  支持 `stderr_file`（默认仍为 /dev/null），main.py 将 `logging.file`
+  传入；`start()` 对 `daemonize` 与 `target_func` 统一兜底，启动期异常
+  以「守护进程启动失败: …」落入运行日志后以非零码退出。
+- 同文件去重：stderr 被重定向到 `logging.file` 时，`setup_logging`
+  检测到 console 输出已天然落盘（dev/ino 比较）即跳过 console handler，
+  杜绝每条日志重复写入；前台模式 stderr 是终端，行为不变。
+- 被否决的备选（决策留痕，详见 changes/009/design.md 第 3 节）：管道
+  握手/就绪文件启动确认（竞态已消除，跨 fork fd 生命周期复杂度不抵收益，
+  留待 systemd Type=notify 类需求）、fork 前不写+孙进程 acquire（仍留
+  第三方活跃 PID 自杀窗口）、flock（自我占坑问题，锁不解决）。
+
 被否决的备选（决策留痕，详见 changes/008/design.md 第 3 节）：flock 独占锁
 （毫秒级竞态窗口收益不抵复杂度）、starttime 身份指纹（tmpfs 重启即清空，
 复用误杀窗口小）、ProcessOps 注入抽象层（monkeypatch 已覆盖测试需求）。

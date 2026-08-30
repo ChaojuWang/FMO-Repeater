@@ -4,11 +4,15 @@
 - 将进程转为后台守护进程（双重 fork）
 - PID 文件生命周期（acquire / release / stop / restart / status）
 
-PID 管理原则（changes/008）：
+PID 管理原则（changes/008，009 修订登记时序）：
 - PID 文件默认固定 /tmp/fmo_repeater.pid，前台与守护模式共用
-- 启动前 acquire：活跃实例存在则拒绝，stale（进程已死）则清理
+- 守护模式 fork 前只读检查（check_pid_file）：活跃实例存在则拒绝，
+  stale（进程已死）则清理；fork 前不写入任何 PID（009：避免孙进程
+  重登记时读到尚未退出完的原进程 PID 而误判活跃实例）
+- 孙进程在 daemonize 末尾无条件覆盖登记自己的 PID（write_pid_file）
 - stop 只发送一次 SIGTERM，monotonic 有界等待；超时返回失败，不 SIGKILL
 - restart 仅在确认旧进程退出后启动
+- 守护分支 stderr 可落入运行日志（stderr_file），启动期失败可见（009）
 """
 
 import os
@@ -87,6 +91,9 @@ class Daemon:
     def acquire_pid_file(self) -> bool:
         """登记 PID：活跃实例存在则拒绝，stale 清理后写入当前 PID
 
+        供前台模式（单进程，无 fork）使用；守护模式的启动检查见
+        check_pid_file / write_pid_file（changes/009）。
+
         Returns:
             bool: 登记成功返回 True；已有活跃实例返回 False
         """
@@ -100,12 +107,50 @@ class Daemon:
             # stale：进程已死亡，清理后继续
             self.release_pid_file()
 
+        self.write_pid_file()
+        return True
+
+    def write_pid_file(self) -> None:
+        """无条件以当前进程 PID 覆盖写入 PID 文件（changes/009）
+
+        供孙进程在 daemonize 末尾调用：fork 前文件中不存在任何祖先进程
+        的 PID（见 check_pid_file），此处覆盖写消灭「孙进程读到尚未退出
+        完的原进程 PID → 误判活跃实例」的竞态窗口。
+        """
         pid_dir = os.path.dirname(self.pid_file)
         if pid_dir and not os.path.exists(pid_dir):
             os.makedirs(pid_dir, exist_ok=True)
         with open(self.pid_file, 'w', encoding='utf-8') as f:
             f.write(f"{os.getpid()}\n")
-        return True
+
+    def check_pid_file(self) -> None:
+        """启动前只读检查（changes/009）：不写入任何 PID
+
+        - PID 文件指向活跃进程 → 报错并以非零码退出（防双实例，同 008）
+        - 指向已死亡进程 / 内容无效 → 清理残留后通过
+        - 文件不存在 → 直接通过
+
+        与 acquire_pid_file 的区别：不在文件中留下当前进程的 PID。
+        守护模式若在 fork 前写入，孙进程重登记时可能读到「尚未退出完的
+        原进程 PID」而误判已有活跃实例（changes/009 修复的竞态根源）。
+
+        Raises:
+            SystemExit: 已有活跃实例时以非零码退出
+        """
+        pid = read_pid_file(self.pid_file)
+        if pid is None:
+            if os.path.exists(self.pid_file):
+                # 内容无效（非整数）：清理残留
+                self.release_pid_file()
+            return
+        if pid != os.getpid() and pid_alive(pid):
+            sys.stderr.write(
+                f"PID 文件 {self.pid_file} 指向活跃进程，"
+                f"守护进程可能已在运行\n"
+            )
+            sys.exit(1)
+        # stale（进程已死亡）：清理残留
+        self.release_pid_file()
 
     def release_pid_file(self) -> None:
         """删除 PID 文件；仅当内容指向仍存活的其他进程时不误删"""
@@ -122,12 +167,17 @@ class Daemon:
     # 守护进程化
     # ------------------------------------------------------------------
 
-    def daemonize(self):
+    def daemonize(self, stderr_file: Optional[str] = None):
         """
         守护进程化
 
         执行双重 fork 和其他守护进程初始化步骤。
-        前置条件：调用方已通过 acquire_pid_file 登记成功。
+        前置条件：调用方已通过 check_pid_file 确认无活跃实例。
+
+        Args:
+            stderr_file: stdout/stderr 落盘文件；None 时保持重定向到
+                /dev/null（changes/009）。指定后启动期异常与提示写入
+                该文件（通常为运行日志），死亡不再无声。
         """
         # 第一次 fork
         try:
@@ -162,13 +212,23 @@ class Daemon:
         with open('/dev/null', 'r') as devnull_r:
             os.dup2(devnull_r.fileno(), sys.stdin.fileno())
 
-        # 将标准输出和标准错误重定向到 /dev/null
-        with open('/dev/null', 'a+') as devnull_w:
-            os.dup2(devnull_w.fileno(), sys.stdout.fileno())
-            os.dup2(devnull_w.fileno(), sys.stderr.fileno())
+        # 将标准输出和标准错误重定向到落盘文件或 /dev/null
+        if stderr_file:
+            stderr_dir = os.path.dirname(stderr_file)
+            if stderr_dir and not os.path.exists(stderr_dir):
+                os.makedirs(stderr_dir, exist_ok=True)
+            with open(stderr_file, 'a') as stdio_w:
+                os.dup2(stdio_w.fileno(), sys.stdout.fileno())
+                os.dup2(stdio_w.fileno(), sys.stderr.fileno())
+        else:
+            with open('/dev/null', 'a+') as devnull_w:
+                os.dup2(devnull_w.fileno(), sys.stdout.fileno())
+                os.dup2(devnull_w.fileno(), sys.stderr.fileno())
 
-        # fork 后 PID 已变化，重写 PID 文件并注册退出清理
-        self.acquire_pid_file()
+        # fork 后 PID 已变化：无条件以孙进程 PID 覆盖 PID 文件（changes/009，
+        # 不做活跃检查——fork 前已由 check_pid_file 确认无活跃实例），
+        # 并注册退出清理
+        self.write_pid_file()
         atexit.register(self.release_pid_file)
 
     # ------------------------------------------------------------------
@@ -181,23 +241,32 @@ class Daemon:
 
         Args:
             target_func: 要作为守护进程运行的函数
+            stderr_file: 关键字参数，透传给 daemonize（changes/009）；
+                其余 *args/**kwargs 透传给 target_func
             *args: 传递给目标函数的位置参数
             **kwargs: 传递给目标函数的关键字参数
 
         Raises:
             SystemExit: 已有活跃实例时以非零码退出
         """
-        if not self.acquire_pid_file():
-            sys.stderr.write(
-                f"PID 文件 {self.pid_file} 指向活跃进程，"
-                f"守护进程可能已在运行\n"
-            )
+        # fork 前只读检查，不在 PID 文件留下原进程 PID（changes/009：
+        # 避免孙进程重登记时读到尚未退出完的原进程 PID 而误判活跃实例）
+        self.check_pid_file()
+
+        stderr_file = kwargs.pop('stderr_file', None)
+
+        # daemonize 与 target_func 一并兜底（changes/009）：孙进程侧任何
+        # 启动失败（含 PID 文件写入失败）落盘可见并以非零码退出
+        try:
+            self.daemonize(stderr_file=stderr_file)
+            target_func(*args, **kwargs)
+        except Exception as e:
+            sys.stderr.write(f"守护进程启动失败: {e}\n")
+            import traceback
+            traceback.print_exc()
             sys.exit(1)
-
-        self.daemonize()
-
-        # 运行目标函数
-        target_func(*args, **kwargs)
+        finally:
+            self.release_pid_file()
 
     def stop(self, timeout: float = STOP_TIMEOUT) -> bool:
         """停止守护进程：只发送一次 SIGTERM，monotonic 有界等待

@@ -302,3 +302,225 @@ class TestTimeoutConstants:
     def test_bounds_defined(self):
         assert STOP_TIMEOUT == 5.0
         assert 0 < STOP_POLL_INTERVAL < 1.0
+
+
+# ---------------------------------------------------------------------------
+# changes/009：启动竞态修复与失败可见性
+# ---------------------------------------------------------------------------
+
+class TestCheckPidFile:
+    """fork 前只读检查：不写入任何 PID"""
+
+    def test_passes_when_no_file(self, fake_env, pid_path):
+        daemon = Daemon(pid_path)
+        daemon.check_pid_file()  # 不抛异常即通过
+        assert not os.path.exists(pid_path)  # 关键：检查不落笔
+
+    def test_passes_and_cleans_stale(self, fake_env, pid_path):
+        with open(pid_path, 'w') as f:
+            f.write("777777\n")  # 已死亡进程
+        daemon = Daemon(pid_path)
+        daemon.check_pid_file()
+        assert not os.path.exists(pid_path)  # stale 清理，且未写入自己
+
+    def test_rejects_active_instance(self, fake_env, pid_path):
+        procs = fake_env[1]
+        procs.alive.add(999999)
+        with open(pid_path, 'w') as f:
+            f.write("999999\n")
+        daemon = Daemon(pid_path)
+        with pytest.raises(SystemExit) as exc:
+            daemon.check_pid_file()
+        assert exc.value.code == 1
+        # 拒绝时保留对方登记
+        assert read_pid_file(pid_path) == 999999
+
+    def test_cleans_invalid_content(self, fake_env, pid_path):
+        with open(pid_path, 'w') as f:
+            f.write("not-a-pid\n")
+        daemon = Daemon(pid_path)
+        daemon.check_pid_file()
+        assert not os.path.exists(pid_path)
+
+
+class TestWritePidFile:
+    def test_overwrites_with_current_pid(self, fake_env, pid_path):
+        # 文件里残留任何旧内容都被无条件覆盖
+        with open(pid_path, 'w') as f:
+            f.write("123456\n")
+        daemon = Daemon(pid_path)
+        daemon.write_pid_file()
+        assert read_pid_file(pid_path) == os.getpid()
+
+
+class TestStartRace:
+    """守护 start 的 PID 登记时序：fork 前不写，daemonize 后覆盖登记"""
+
+    def test_start_no_pid_written_before_daemonize(self, fake_env, pid_path,
+                                                   monkeypatch):
+        """竞态根源回归用例：daemonize 开始时文件必须不存在"""
+        daemon = Daemon(pid_path)
+        order = []
+
+        def fake_daemonize(stderr_file=None):
+            order.append(('daemonize_begin', os.path.exists(pid_path)))
+            daemon.write_pid_file()
+            order.append(
+                ('daemonize_end_pid', read_pid_file(pid_path))
+            )
+
+        monkeypatch.setattr(daemon, 'daemonize', fake_daemonize)
+        daemon.start(lambda *a, **k: None)
+
+        assert order[0] == ('daemonize_begin', False)  # fork 前未写入
+        # daemonize 末尾登记的是当前（孙）进程的 PID
+        assert order[1] == ('daemonize_end_pid', os.getpid())
+
+    def test_start_overwrites_stale_content_after_daemonize(
+            self, fake_env, pid_path, monkeypatch):
+        """daemonize 末尾登记为无条件覆盖（即便文件曾残留第三方内容）"""
+        daemon = Daemon(pid_path)
+        seen = {}
+
+        def fake_daemonize(stderr_file=None):
+            # daemonize 执行时 stale 已被 check_pid_file 清理，
+            # 随后无条件覆盖登记当前（孙）进程 PID
+            seen['at_daemonize'] = read_pid_file(pid_path)
+            daemon.write_pid_file()
+            seen['after'] = read_pid_file(pid_path)
+
+        with open(pid_path, 'w') as f:
+            f.write("777777\n")  # 已死亡进程的残留
+
+        monkeypatch.setattr(daemon, 'daemonize', fake_daemonize)
+        daemon.start(lambda *a, **k: None)
+        # check_pid_file 已在 daemonize 前清理 stale；daemonize 覆盖登记自己
+        assert seen == {'at_daemonize': None, 'after': os.getpid()}
+
+    def test_start_cleans_pid_file_when_target_raises(
+            self, fake_env, pid_path, monkeypatch):
+        """target_func 异常 → 以非零码退出且 PID 文件被兜底清理"""
+
+        def boom(*a, **k):
+            raise RuntimeError("模拟启动失败")
+
+        daemon = Daemon(pid_path)
+        monkeypatch.setattr(
+            daemon, 'daemonize',
+            lambda stderr_file=None: daemon.write_pid_file(),
+        )
+        with pytest.raises(SystemExit) as exc:
+            daemon.start(boom)
+        assert exc.value.code == 1
+        assert not os.path.exists(pid_path)  # finally 兜底清理
+
+    def test_start_cleans_pid_file_on_normal_return(
+            self, fake_env, pid_path, monkeypatch):
+        daemon = Daemon(pid_path)
+        monkeypatch.setattr(
+            daemon, 'daemonize',
+            lambda stderr_file=None: daemon.write_pid_file(),
+        )
+        daemon.start(lambda *a, **k: None)
+        assert not os.path.exists(pid_path)
+
+    def test_start_passes_stderr_file_to_daemonize_only(
+            self, fake_env, pid_path, monkeypatch):
+        seen = {}
+        received = {}
+        daemon = Daemon(pid_path)
+
+        def fake_daemonize(stderr_file=None):
+            seen['stderr_file'] = stderr_file
+            daemon.write_pid_file()
+
+        def target(*args, **kwargs):
+            received.update(kwargs)
+
+        monkeypatch.setattr(daemon, 'daemonize', fake_daemonize)
+        daemon.start(target, 'cfg.yaml', 'p.pid', stderr_file='/x/err.log')
+        assert seen['stderr_file'] == '/x/err.log'
+        # 不污染 target 参数
+        assert 'stderr_file' not in received
+
+
+class TestDaemonizeStderrFile:
+    """daemonize(stderr_file=...)：stdout/stderr 落盘而非 /dev/null
+
+    monkeypatch os.fork 恒返回 0（走子进程分支），测试进程不真实 fork、
+    不真实退出。stdin/stdout/stderr 的 fileno 由 pytest capture 接管
+    （无真实 fd），统一 patch 为常量 0/1/2；os.dup2 换成记录器后，
+    用 open 返回的真实文件对象 + /proc/self/fd 验证重定向源。
+    """
+
+    @pytest.fixture
+    def child_env(self, monkeypatch, tmp_path):
+        import builtins
+
+        import fmo_repeater.service.daemon as dm
+
+        monkeypatch.setattr(dm.os, 'fork', lambda: 0)  # 恒为子进程分支
+        monkeypatch.setattr(dm.os, 'setsid', lambda: 0)
+        monkeypatch.setattr(dm.os, 'umask', lambda m: 0)  # 不污染进程 umask
+        # pytest capture 接管了标准流（无真实 fileno），patch 为常量
+        monkeypatch.setattr(dm.sys.stdin, 'fileno', lambda: 0, raising=False)
+        monkeypatch.setattr(dm.sys.stdout, 'fileno', lambda: 1, raising=False)
+        monkeypatch.setattr(dm.sys.stderr, 'fileno', lambda: 2, raising=False)
+        # 不真实注册 atexit，避免污染测试进程
+        monkeypatch.setattr(dm.atexit, 'register', lambda f: None)
+
+        real_open = builtins.open  # 先留原件，避免 tracking_open 递归
+        opened_fds = {}   # fd -> 打开时的真实路径（仅 daemonize 打开的文件）
+        dup2_record = []  # (源文件 basename, 重定向目标 fd)
+
+        def tracking_open(file, mode='r', *args, **kwargs):
+            fobj = real_open(file, mode, *args, **kwargs)
+            try:
+                opened_fds[fobj.fileno()] = os.path.realpath(str(file))
+            except OSError:
+                pass
+            return fobj
+
+        def recording_dup2(fd, target):
+            # 只记录 daemonize 自己打开的 fd 的重定向；不真实执行，
+            # 避免污染测试进程的标准流（pytest 自身的 dup2 调用因 fd
+            # 不在 opened_fds 中被自动忽略）
+            src = opened_fds.get(fd)
+            if src is not None:
+                dup2_record.append((os.path.basename(src), target))
+            return target
+
+        monkeypatch.setattr(dm.os, 'dup2', recording_dup2)
+        monkeypatch.setattr(builtins, 'open', tracking_open)
+        return dup2_record
+
+    def test_stdout_stderr_go_to_stderr_file(self, child_env, tmp_path):
+        dup2_record = child_env
+        err_file = tmp_path / "logs" / "daemon_err.log"
+        daemon = Daemon(str(tmp_path / "test.pid"), working_dir=str(tmp_path))
+
+        daemon.daemonize(stderr_file=str(err_file))
+
+        # 目录自动创建，文件以追加模式存在
+        assert err_file.parent.is_dir()
+        assert err_file.exists()
+        # 三次重定向：stdin←/dev/null，stdout/stderr←stderr_file
+        assert dup2_record == [
+            ('null', 0),
+            ('daemon_err.log', 1),
+            ('daemon_err.log', 2),
+        ]
+
+    def test_default_keeps_devnull(self, child_env, tmp_path):
+        dup2_record = child_env
+        daemon = Daemon(str(tmp_path / "test.pid"), working_dir=str(tmp_path))
+
+        daemon.daemonize()
+
+        assert dup2_record == [
+            ('null', 0),
+            ('null', 1),
+            ('null', 2),
+        ]
+
+

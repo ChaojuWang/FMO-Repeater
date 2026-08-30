@@ -185,11 +185,23 @@ def main():
     # 执行相应操作
     if args.action == 'start':
         if args.daemon:
+            # 守护化之前在前台预加载并校验配置（changes/009）：
+            # 配置错误直接在前台可见地报错，而不是被守护进程吞进黑盒
+            try:
+                config = load_config(args.config)
+                validate_config(config)
+            except Exception as e:
+                print(f"配置错误: {e}")
+                sys.exit(1)
             print(f"以守护进程模式启动 FMO Repeater 服务...")
             print(f"PID 文件: {resolved_pid_file}")
             print(f"配置文件: {args.config}")
-            print(f"日志位置: 请查看配置文件中的 logging.file 设置")
-            daemon.start(run_service, args.config, args.pid_file)
+            print(f"日志位置: {config['logging']['file']}")
+            # stderr 落到运行日志：启动期异常/提示不再进入 /dev/null
+            daemon.start(
+                run_service, args.config, args.pid_file,
+                stderr_file=config['logging']['file'],
+            )
         else:
             print(f"启动 FMO Repeater 服务（前台模式）...")
             print(f"配置文件: {args.config}")
