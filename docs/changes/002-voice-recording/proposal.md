@@ -1,43 +1,38 @@
-# 提案：语音录制功能（Voice Recording）
+# 提案：语音录制与保留策略（Voice Recording）
 
-> status: designed（详细设计已完成，见 design.md / tasks.md；待实施）
+> status: merged
 > 变更编号：002
 
 ## 1. 动机
 
-Echo 服务天然汇集全网语音流，具备录制归档价值：回放调试、通联记录留存、语音质量分析。协议重构（变更 001）落地后，完整的解析能力（消息头元数据 + 编码语音帧 + 编解码器）使录音成为可行的新增功能。
+Echo 服务汇集已经通过协议校验、信道仲裁并封口的完整 PTT，适合用于回放调试、
+通联留存和语音质量分析。录音需要默认关闭，并通过容量和期限限制避免长期运行耗尽磁盘。
 
 ## 2. 目标
 
-1. 可配置开关：`recording.enabled`，**默认 false**（不影响现有部署）
-2. 开启后：订阅 `TransmissionCompleted`，每个获准占用信道的 PTT 独立落盘
-3. 输出 WAV（8kHz / 16bit / mono，协议公共音频参数），RADPCM 纯 Python 解码；OPUS 依赖 libopus，缺失时降级保存原始编码帧（`.opusraw`）
-4. 录制事件写入 JSONL 事件日志（复用变更 001 的 event_log）
+1. `recording.enabled` 默认 false，关闭时不订阅完成事件、不创建目录。
+2. 每个 `TransmissionCompleted` 生成一个 8kHz/16bit/mono 录音文件。
+3. 正常单 codec PTT 输出 WAV；OPUS 不可解码时保留完整原始编码。
+4. 文件扁平保存于 `./recording`，名称为毫秒时间戳、呼号和 UID。
+5. 默认最多 `512M`、保留 `1w`，启动和每次保存后清理。
+6. 录制、编码异常、降级和清理行为写入运行日志及 JSONL 事件日志。
 
 ## 3. 范围
 
 ### 做
-- `fmo_repeater/service/recorder.py`：Recorder（开关、分流、解码、落盘）
-- 录制相关配置节与验证
-- pytest 测试（WAV 落盘、开关、降级、事件）
+
+- `fmo_repeater/service/recorder.py`：解码、单 PTT 合并落盘、OPUS 降级和目录 rotate。
+- recording 配置、容量/时长缩写解析与校验。
+- 首包墙钟时间进入 `TransmissionCompleted`，用于文件命名。
+- pytest 单元及组合测试、用户文档和存量设计合并。
 
 ### 不做
-- 音频增强（滤波、增益、降噪）
-- 录音管理与清理策略（磁盘配额、保留期）——后续 change
-- 上传 / 远程存储
 
-## 4. 初步设计要点（详细设计待迭代一完成后补写）
+- 音频增强、上传或远程存储。
+- 后台定时清理线程；无新录音时在下次启动再清理。
+- 录音索引、查询或播放 API。
 
-- 文件命名：`recordings/{callsign}/{YYYYMMDD-HHmmss}-{uid}-{seq:03d}-{codec}.wav`
-  - `YYYYMMDD-HHmmss`：流开始本地时间
-  - `uid`：发送者 UID
-  - `seq`：同一（呼号, 秒）下防冲突的递增序号，3 位
-  - `codec`：`RADPCM` / `OPUS`；降级时扩展名 `.opusraw`
-  - 非法呼号字符（路径不安全）替换为 `_`
-- 流边界：直接采用 change 005 统一仲裁和超时后产生的完成事件，不再自行切流
-- WAV 写入：`wave` 标准库（PCM 16bit mono 8kHz，非压缩 RIFF）
-- 降级：OPUS 帧无 libopus → 逐帧拼接 raw（保留 8B 编码帧头便于事后离线解码），后缀 `.opusraw`，事件日志记 `degraded: true`
+## 4. 依赖
 
-## 5. 依赖
-
-- 变更 001：协议层、codecs、event_log；变更 005：`TransmissionCompleted` 事件总线
+- 变更 001：协议层、codecs、event_log。
+- 变更 005：`TransmissionCompleted` 与独立消费者事件总线。

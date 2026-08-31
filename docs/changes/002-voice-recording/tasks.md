@@ -1,44 +1,35 @@
-# 任务清单：语音录制功能（变更 002）
+# 任务清单：语音录制与保留策略（变更 002）
 
-> 状态标记：`[ ]` 待办 ｜ `[x]` 完成 ｜ `[~]` 部分完成
-> 设计：design.md（status: designed，待实施）
+> 状态标记：`[ ]` 待办 ｜ `[x]` 完成
 
-## T1 配置
-- [ ] T1.1 `config.py` 新增 `recording` 节（enabled 默认 false / directory 默认 recordings）
-  - 验收：默认配置不含 recording 时 load_config 不报错（默认关闭）；validate 校验 enabled bool、enabled=true 时 directory 非空
-- [ ] T1.2 `config.yaml.example` 增补 recording 节注释
-  - 验收：模板含 recording 节且 enabled: false
+## T1 配置与时间
 
-## T2 Recorder 实现
-- [ ] T2.1 `fmo_repeater/service/recorder.py` Recorder 类骨架（开关 no-op 模式、锁、输出目录创建）
-  - 验收：enabled=false 时 feed/finalize no-op、无目录创建
-- [ ] T2.2 事件消费（§4）：每个 TransmissionCompleted 独立录制；codec 变化 segment 收口
-  - 验收：两个事件两组文件；单事件混合 codec 两 segment 两文件
-- [ ] T2.3 WAV 落盘（RADPCM/OPUS）：wave 标准库 8kHz/16bit/mono；duration_ms 统计
-  - 验收：`wave` 读回参数与样本数正确；样本数=640×帧数（RADPCM）/320×帧数（OPUS）
-- [ ] T2.4 OPUS 降级 `.opusraw`（含 8B 编码帧头）与事件 degraded: true
-  - 鬿收：opus_is_available()=False 时产出 .opusraw 且字节流=编码帧序列
-- [ ] T2.5 文件命名与 callsign 清洗（§5）
-  - 验收：`{YYYYMMDD-HHmmss}-{uid}-{seq:03d}-{codec}` 格式；同(callsign,秒)seq 递增；`..`/空格/空呼号清洗安全
-- [ ] T2.6 错误处理（§9）：单帧解码异常跳帧计数；写盘失败事件+WARNING 不中断服务
-  - 验收：注入坏帧后整流仍落盘且 recording_saved.frames 为成功帧数
+- [x] T1.1 新增 recording 默认配置、容量/时长解析与完整校验。
+- [x] T1.2 MQTT/TransmissionCompleted 传递首包 wall time。
+- [x] T1.3 config.yaml.example 增补默认关闭、`512M`、`1w` 示例。
 
-## T3 RepeaterService 集成
-- [ ] T3.1 注册 Recorder 为独立 TransmissionConsumer
-  - 验收：recording.enabled=false 不订阅；开启后 mock MQTT 全流程文件生成
+## T2 Recorder
 
-## T4 事件日志
-- [ ] T4.1 新事件 recording_stream_start / recording_saved / recording_discarded
-  - 验收：JSONL 行字段完整（file/frames/duration_ms/bytes/degraded）
+- [x] T2.1 实现 disabled no-op、单 PTT 单 WAV、扁平毫秒命名和原子替换。
+- [x] T2.2 实现 RADPCM/OPUS 解码、codec 变化 WARNING/事件及坏帧隔离。
+- [x] T2.3 实现无 OPUS 时 `.opusraw`、异常混合时 `.fmoraw` 降级。
+- [x] T2.4 实现启动及保存后按年龄/总容量 rotate 和清理事件。
 
-## T5 测试
-- [ ] T5.1 `tests/test_recorder.py`（design.md §10 全项）
-  - 验收：./run_tests.sh 全绿；OPUS 用例缺依赖自动 skip
-- [ ] T5.2 `tests/test_config.py` 增补 recording 节用例
-  - 验收：默认值/校验规则通过
+## T3 集成与测试
 
-## T6 文档
-- [ ] T6.1 `docs/design/logging.md` 事件表增补三个新事件
-- [ ] T6.2 `docs/design/service.md` 增补 Recorder 章节
-- [ ] T6.3 `README.md` / `CLAUDE.md` 更新（recording 配置说明）
-- [ ] T6.4 迭代完成：changes/002 合并入 docs/design/ 并标记 status: merged
+- [x] T3.1 RepeaterService 仅在启用时构造、订阅 Recorder。
+- [x] T3.2 新增 recorder、config、wall time、rotate 单元测试。
+- [x] T3.3 增补离线组合测试并运行默认 `./run_tests.sh` 全绿。
+- [x] T3.4 用户完成实际服务测试，确认基本功能正常。
+
+## T4 文档合并
+
+- [x] T4.1 更新 README、CLAUDE.md、配置示例。
+- [x] T4.2 合并至 docs/design/architecture.md、service.md、logging.md、testing.md。
+- [x] T4.3 集成验收后标记 merged 并合入 main。
+
+## T5 审查修复
+
+- [x] T5.1 正整数 `max_total_size` 按字节接受并补充回归测试。
+- [x] T5.2 Recorder 增加在途取消，组合根在等待事件总线前调用 stop。
+- [x] T5.3 补充取消顺序、解码中止和临时文件清理测试，运行默认离线测试。

@@ -4,12 +4,15 @@ from .config import (
     DEFAULT_CONFIG,
     deep_merge,
     load_config,
+    parse_duration,
+    parse_size,
     validate_config,
     save_default_config,
 )
 from .logging_setup import setup_logging
 from .event_log import EventLog
 from .echo import EchoService
+from .recorder import Recorder
 from .repeater import RepeaterService
 from .transmission import (
     TimedPacket,
@@ -25,11 +28,14 @@ __all__ = [
     "DEFAULT_CONFIG",
     "deep_merge",
     "load_config",
+    "parse_duration",
+    "parse_size",
     "validate_config",
     "save_default_config",
     "setup_logging",
     "EventLog",
     "EchoService",
+    "Recorder",
     "RepeaterService",
     "TimedPacket",
     "TransmissionCompleted",

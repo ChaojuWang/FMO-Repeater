@@ -10,6 +10,7 @@ from .echo import EchoService
 from .event_log import EventLog
 from .logging_setup import setup_logging
 from .mqtt_transport import MqttTransport
+from .recorder import Recorder
 from .transmission import TransmissionEventBus, TransmissionProducer
 
 
@@ -37,6 +38,12 @@ class RepeaterService:
             own_replay_filter=self.echo.is_own_replay,
         )
         self.event_bus.subscribe("echo", self.echo.handle)
+        self.recorder = None
+        if config.get("recording", {}).get("enabled", False):
+            self.recorder = Recorder(
+                config, event_log=self.event_log, logger=self.logger
+            )
+            self.event_bus.subscribe("recorder", self.recorder.handle)
         self.transport = MqttTransport(
             config,
             on_payload=self.producer.submit,
@@ -115,6 +122,8 @@ class RepeaterService:
         self.running = False
         self.transport.quiesce()
         self.echo.stop()
+        if self.recorder is not None:
+            self.recorder.stop()
         bus_stopped = self.event_bus.stop(cancel_pending=True, timeout=None)
         producer_stopped = self.producer.stop(timeout=None)
         if not bus_stopped or not producer_stopped:

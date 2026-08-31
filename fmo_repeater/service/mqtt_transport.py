@@ -27,7 +27,7 @@ class MqttTransport:
     def __init__(
         self,
         config: Dict[str, Any],
-        on_payload: Callable[[bytes, float], None],
+        on_payload: Callable[[bytes, float, float], None],
         on_connected: Optional[Callable[[], None]] = None,
         on_disconnected: Optional[Callable[[Any], None]] = None,
         logger=None,
@@ -101,10 +101,11 @@ class MqttTransport:
 
     def _on_message(self, client, userdata, msg):
         received_at = time.monotonic()
+        received_wall_time = time.time()
         with self._lock:
             accepting = self._accepting
         if accepting:
-            self.on_payload(bytes(msg.payload), received_at)
+            self.on_payload(bytes(msg.payload), received_at, received_wall_time)
 
     def submit(self, payload: bytes):
         """原子检查关闭状态并向 Paho 提交发布，等待在锁外进行。"""

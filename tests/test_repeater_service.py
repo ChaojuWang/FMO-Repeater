@@ -1,10 +1,12 @@
 """RepeaterService 组合根与立即停机测试。"""
 
 import threading
+import time
 
 from fmo_repeater.service import (
     EchoService,
     PublishOutcome,
+    Recorder,
     RepeaterService,
     TimedPacket,
     TransmissionCompleted,
@@ -30,6 +32,41 @@ def test_composition_keeps_echo_service_business_name(service_config):
     service = RepeaterService(service_config)
     assert isinstance(service.echo, EchoService)
     assert service.echo.coordinator is service.coordinator
+    assert service.recorder is None
+    assert [item.name for item in service.event_bus._subscriptions] == ['echo']
+
+
+def test_recording_enabled_registers_independent_consumer(
+    service_config, make_packet
+):
+    service_config['recording']['enabled'] = True
+    service = RepeaterService(service_config)
+    assert isinstance(service.recorder, Recorder)
+    assert [item.name for item in service.event_bus._subscriptions] == [
+        'echo', 'recorder'
+    ]
+
+    service.echo.stop()
+    service.event_bus.start()
+    service.event_bus.publish(
+        TransmissionCompleted(
+            vendor=0x1111,
+            uid=42,
+            callsign='FMOTEST',
+            stream_begin_utc=1000,
+            first_received_at=1.0,
+            last_received_at=1.0,
+            first_received_wall_time=1700000000.0,
+            packets=(TimedPacket(make_packet(), 0.0),),
+            reason='idle_timeout',
+        )
+    )
+    deadline = time.monotonic() + 1.0
+    directory = service.recorder.directory
+    while not list(directory.glob('*.wav')) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    service.event_bus.stop(cancel_pending=False)
+    assert len(list(directory.glob('*.wav'))) == 1
 
 
 def test_stop_is_immediate_and_idempotent(service_config):
@@ -71,6 +108,10 @@ def test_shutdown_disables_echo_and_bus_before_joining_producer(service_config):
             order.append("bus")
             return True
 
+    class Recorder:
+        def stop(self):
+            order.append("recorder")
+
     class Producer:
         def stop(self, timeout=None):
             order.append("producer")
@@ -78,10 +119,13 @@ def test_shutdown_disables_echo_and_bus_before_joining_producer(service_config):
 
     service.transport = Transport()
     service.echo = Echo()
+    service.recorder = Recorder()
     service.event_bus = Bus()
     service.producer = Producer()
     service.stop()
-    assert order == ["quiesce", "echo", "bus", "producer", "disconnect"]
+    assert order == [
+        "quiesce", "echo", "recorder", "bus", "producer", "disconnect"
+    ]
 
 
 def test_service_can_be_constructed_off_main_thread(service_config):
@@ -138,6 +182,7 @@ def test_disconnect_waits_for_active_echo_consumer(service_config, make_packet):
             stream_begin_utc=1000,
             first_received_at=1.0,
             last_received_at=1.0,
+            first_received_wall_time=1700000000.0,
             packets=(TimedPacket(payload, 0.0),),
             reason="idle_timeout",
         )

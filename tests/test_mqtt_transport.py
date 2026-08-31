@@ -69,7 +69,9 @@ def make_transport(service_config, client=None, on_payload=None):
 
     transport = MqttTransport(
         service_config,
-        on_payload=on_payload or (lambda payload, received_at: None),
+        on_payload=on_payload or (
+            lambda payload, received_at, received_wall_time: None
+        ),
         client_factory=factory,
     )
     return transport, client, factory_args
@@ -82,8 +84,8 @@ def test_connect_configures_credentials_qos_and_callbacks(service_config):
     client = FakeClient()
     transport = MqttTransport(
         service_config,
-        on_payload=lambda payload, received_at: payloads.append(
-            (payload, received_at)
+        on_payload=lambda payload, received_at, received_wall_time: payloads.append(
+            (payload, received_at, received_wall_time)
         ),
         on_connected=lambda: connected.append(True),
         client_factory=lambda *args: client,
@@ -98,6 +100,7 @@ def test_connect_configures_credentials_qos_and_callbacks(service_config):
     assert connected == [True]
     assert payloads[0][0] == b"voice"
     assert isinstance(payloads[0][1], float)
+    assert isinstance(payloads[0][2], float)
 
 
 def test_submit_waits_for_publish_completion(service_config):
@@ -160,4 +163,3 @@ def test_disconnect_happens_before_loop_stop(service_config):
     transport.disconnect()
     names = [call[0] for call in client.calls]
     assert names.index("disconnect") < names.index("loop_stop")
-

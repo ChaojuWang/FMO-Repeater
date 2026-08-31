@@ -68,6 +68,7 @@ logs/
 *.jsonl
 
 # 语音录制输出
+recording/
 recordings/
 
 # 配置文件（可能包含敏感信息）

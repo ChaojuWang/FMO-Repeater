@@ -56,6 +56,14 @@ def test_idle_timeout_emits_immutable_transmission(service_config, make_packet):
     assert event.uid == 10
     assert event.reason == "idle_timeout"
     assert event.packets == (TimedPacket(payload, 0.0),)
+    assert isinstance(event.first_received_wall_time, float)
+
+
+def test_first_packet_wall_time_is_preserved(service_config, make_packet):
+    producer, bus = make_producer(service_config)
+    producer.process_packet(make_packet(uid=10), 5.0, 1700000000.125)
+    producer.poll(7.0)
+    assert bus.events[0].first_received_wall_time == 1700000000.125
 
 
 def test_conflicting_packet_is_not_mixed(service_config, make_packet):
@@ -158,7 +166,9 @@ def test_event_bus_isolates_consumers():
     bus.subscribe("broken", broken)
     bus.subscribe("healthy", healthy)
     bus.start()
-    event = TransmissionCompleted(1, 2, "T", 3, 0.0, 0.0, (), "idle_timeout")
+    event = TransmissionCompleted(
+        1, 2, "T", 3, 0.0, 0.0, 1700000000.0, (), "idle_timeout"
+    )
     bus.publish(event)
     assert done.wait(1.0)
     bus.stop()
@@ -171,7 +181,9 @@ def test_stopped_event_bus_rejects_late_publish():
     bus.subscribe("consumer", delivered.append)
     bus.start()
     bus.stop()
-    event = TransmissionCompleted(1, 2, "T", 3, 0.0, 0.0, (), "idle_timeout")
+    event = TransmissionCompleted(
+        1, 2, "T", 3, 0.0, 0.0, 1700000000.0, (), "idle_timeout"
+    )
     bus.publish(event)
     time.sleep(0.02)
     assert delivered == []
@@ -188,7 +200,9 @@ def test_event_bus_reports_consumer_join_timeout():
 
     bus.subscribe("blocking", blocking)
     bus.start()
-    event = TransmissionCompleted(1, 2, "T", 3, 0.0, 0.0, (), "idle_timeout")
+    event = TransmissionCompleted(
+        1, 2, "T", 3, 0.0, 0.0, 1700000000.0, (), "idle_timeout"
+    )
     bus.publish(event)
     assert entered.wait(1.0)
     assert bus.stop(timeout=0.01) is False

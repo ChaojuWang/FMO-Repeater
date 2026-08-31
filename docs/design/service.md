@@ -1,6 +1,6 @@
 # 服务层设计
 
-> Merged from changes/001, 003, 004, 005, 006, 007, 008
+> Merged from changes/001, 002, 003, 004, 005, 006, 007, 008
 
 ## 1. 配置
 
@@ -16,6 +16,11 @@ echo:
   vendor: 0x2000
   uid: 65535                 # 必须非零
   callsign_prefix: 'RE>'     # 非空，UTF-8 编码不超过 12B
+recording:
+  enabled: false
+  directory: './recording'
+  max_total_size: '512M'
+  max_age: '1w'
 event_log: {enabled, file, max_bytes, backup_count}
 logging: {level, console, file, max_bytes, backup_count}
 daemon: {enabled, pid_file}
@@ -28,7 +33,8 @@ daemon: {enabled, pid_file}
 ## 2. PTT 完成事件
 
 `TimedPacket` 保存不可变原始包字节和相对接收时间；`TransmissionCompleted` 保存
-首包身份、首末单调时间、包元组与结束原因。原因包括：
+首包身份、首末单调时间、首包墙钟时间、包元组与结束原因。墙钟只用于日历命名，
+路由和超时仍只使用 monotonic。原因包括：
 
 - `idle_timeout`：最后一包后满配置超时
 - `route_replaced`：路由窗口已过，新发送者接管
@@ -77,7 +83,7 @@ header.vendor 必须先等于 Echo vendor；其后 UID 等于配置的非零 Ech
 ## 4. MqttTransport
 
 `MqttTransport` 唯一持有 Paho Client，负责连接、订阅、回调入队、发布完成等待和
-断连。回调一进入即记录 monotonic 接收时间。Echo 在路由租约临界区内只提交
+断连。回调一进入即记录 monotonic 接收时间和 wall time。Echo 在路由租约临界区内只提交
 `publish`，随后在锁外用最多 100ms 的等待片段检查 Paho 完成、总超时和关闭取消。
 
 QoS 默认 0 以保持实时语音兼容，可配置 0/1/2；`publish_timeout` 必须为正数。
@@ -87,12 +93,31 @@ QoS 0 的完成表示消息离开客户端，QoS 1/2 分别等待对应 MQTT 握
 ## 5. RepeaterService
 
 组合并启动 MqttTransport、ChannelCoordinator、TransmissionEventBus、
-TransmissionProducer 和 EchoService。进程信号只在 `main.py` 注册，服务可在任意
+TransmissionProducer、EchoService，并在启用时注册 Recorder。进程信号只在
+`main.py` 注册，服务可在任意
 线程构造。停机是幂等的立即取消：transport quiesce → Echo cancel → 清空并等待
 事件消费者 → 停止生产者 → MQTT disconnect。消费者和生产者是非 daemon 线程，
 断连前必须确认退出；已经由 Paho 确认完成的包不撤回。
 
-## 6. 结构化事件
+## 6. Recorder
+
+`recording.enabled=false` 时不构造、不订阅且不创建目录。启用后 Recorder 通过独立
+FIFO 线程消费完成事件，每个 PTT 生成一个扁平文件：
+`YYYYMMDD-HHmmss-SSS-呼号-UID.wav`。RADPCM/OPUS 解码后按帧顺序写入
+8kHz/16bit/mono WAV；同一 PTT codec 变化视为异常，记 WARNING 和事件，但可解码
+时仍拼为一个 WAV。
+
+缺少 OPUS 时，纯 OPUS 保存包含完整 8B 编码帧头的 `.opusraw`；异常混合编码保存
+`.fmoraw`。落盘使用同目录临时文件加原子替换。同名毫秒时间戳文件允许覆盖。
+
+目录默认 `./recording`，总量 `512M`、保留期 `1w`；容量可用非负整数字节或
+B/K/M/G/T 缩写，期限支持 h/d/w，0 关闭相应限制。启动及每次保存后先删除过期录音，再按 mtime 从旧到新
+删除至总量达标。只管理根目录直属 `.wav/.opusraw/.fmoraw` 文件。
+
+停机在等待事件总线前先调用 Recorder stop。取消信号在逐包解析、逐帧解码、逐帧
+写入和 rotate 删除之间检查；未完成临时文件会清理，已经原子替换的文件视为成功。
+
+## 7. 结构化事件
 
 | 类别 | 事件 |
 |---|---|
@@ -101,11 +126,13 @@ TransmissionProducer 和 EchoService。进程信号只在 `main.py` 注册，服
 | 路由 | route_acquired, route_rejected, route_preempted, uplink_limited |
 | Echo 路由 | echo_route_acquired, echo_route_rejected, echo_preempted |
 | 回放 | replay_started, replay_finished |
+| 录音 | recording_stream_start, recording_codec_changed, recording_saved, recording_discarded |
+| 录音清理 | recording_deleted, recording_cleanup_failed |
 
 `stream_end` 包含 `packets/duration_s/reason`，其中 duration 是网络接收跨度。
 `replay_finished` 包含成功、失败、截断、丢弃数和完成原因。
 
-## 7. 守护进程
+## 8. 守护进程
 
 > Merged from changes/008
 
