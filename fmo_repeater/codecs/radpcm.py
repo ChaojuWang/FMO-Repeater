@@ -110,13 +110,12 @@ def parse_frame(frame: bytes) -> tuple[RadpcmFrameInfo, bytes]:
         )
 
     adpcm_low = adpcm_raw & 0xFF
-    adpcm_high = (adpcm_raw >> 8) & 0xFF
     if adpcm_raw == DATA_BYTES:
         # 新格式：uint16 = 320
         legacy = False
         adpcm_bytes = DATA_BYTES
-    elif adpcm_high == 0 and adpcm_low == 64:
-        # 旧格式：8-bit 字段，线值 64（低字节）且高字节为填充
+    elif adpcm_low == 64:
+        # 旧格式：8-bit 字段线值 64；其后的填充字节未初始化，必须忽略
         legacy = True
         adpcm_bytes = DATA_BYTES
     else:

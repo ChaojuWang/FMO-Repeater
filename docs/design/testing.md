@@ -1,6 +1,6 @@
 # 测试体系设计
 
-> Merged from changes/001, 002, 003, 005, 006, 007
+> Merged from changes/001, 002, 003, 005, 006, 007, 010
 
 ## 1. 框架与入口
 
@@ -17,7 +17,7 @@
 | tests/test_protocol_packet.py | 帧结构 roundtrip、parser 校验链（length/CRC/index/残余）、聚合上限（OPUS≤6/RADPCM≤3、MTU）、超 MTU 单帧兼容、多包 roundtrip |
 | tests/test_protocol_vendor.py | 四区间判定、保留区拒绝、越界 |
 | tests/test_ptt_routing.py | §8 路由窗口、抢占、UID 平局、uint32 回绕、上行限时、Echo 租约 |
-| tests/test_codec_radpcm.py | 步长/索引表、非法 step_index、帧结构（恢复点/回绕/旧格式兼容）、roundtrip SNR（连续≥20dB/单帧≥15dB）、状态延续、丢包恢复、直流抑制可逆 |
+| tests/test_codec_radpcm.py | 步长/索引表、非法 step_index、帧结构（恢复点/回绕/旧格式任意填充字节兼容）、roundtrip SNR（连续≥20dB/单帧≥15dB）、状态延续、丢包恢复、直流抑制可逆 |
 | tests/test_codec_opus.py | 可用性探测与降级、roundtrip、VBR 变长、PLC 空帧、reset |
 | tests/test_transmission.py | PTT 完成边界、冲突隔离、事件不可变模型与消费者隔离 |
 | tests/test_echo_service.py | Echo 路由申请、固定 streamBeginUTC、头重写、截断、抢占与立即取消 |
