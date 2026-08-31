@@ -84,16 +84,30 @@ class TestFrameStructure:
         assert i1.frame_index == 0xFFFE
         assert i2.frame_index == 0xFFFF
 
-    def test_legacy_8bit_adpcm_bytes(self):
+    @pytest.mark.parametrize(
+        ("padding", "legacy"),
+        [(0x00, True), (0x01, False), (0xE4, True), (0xFF, True)],
+    )
+    def test_legacy_8bit_adpcm_bytes(self, padding, legacy):
         pcm = sine_pcm16(SAMPLES_PER_FRAME, 10000, 300)
         frame = bytearray(encode_frame(pcm))
-        # 旧格式：8-bit 字段线值 64（低字节 64、高字节 0 填充）
+        # 旧格式：偏移 6 是 8-bit 线值 64，偏移 7 是未初始化填充
         frame[6] = 64
-        frame[7] = 0
+        frame[7] = padding
         info, data = parse_frame(bytes(frame))
-        assert info.legacy is True
+        # padding=1 与新格式 uint16=320 重合，优先标记为新格式
+        assert info.legacy is legacy
         assert info.adpcm_bytes == DATA_BYTES
         assert len(data) == DATA_BYTES
+
+    def test_legacy_e440_decodes_to_pcm(self):
+        pcm = sine_pcm16(SAMPLES_PER_FRAME, 10000, 300)
+        frame = bytearray(encode_frame(pcm))
+        frame[6:8] = struct.pack("<H", 0xE440)
+
+        out = RadpcmDecoder().decode(bytes(frame))
+
+        assert len(out) == SAMPLES_PER_FRAME * 2
 
     def test_bad_frame_rejected(self):
         with pytest.raises(ProtocolError):
@@ -101,8 +115,15 @@ class TestFrameStructure:
         # 328B 但 adpcmBytes 非法（=0：既非新格式 320 也非旧格式 64）
         bad = bytearray(b"\x00" * FRAME_BYTES)
         bad[6:8] = struct.pack("<H", 0)
-        with pytest.raises(ProtocolError):
+        with pytest.raises(ProtocolError) as exc:
             parse_frame(bytes(bad))
+        assert exc.value.reason == "bad_length"
+
+        # 高字节可为任意填充，但低字节不是旧格式线值 64 时仍应拒绝
+        bad[6:8] = struct.pack("<H", 0xE441)
+        with pytest.raises(ProtocolError) as exc:
+            parse_frame(bytes(bad))
+        assert exc.value.reason == "bad_length"
 
     @pytest.mark.parametrize("step_index", [89, 255])
     def test_bad_step_index_rejected_while_parsing(self, step_index):
