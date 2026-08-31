@@ -33,6 +33,7 @@ class TransmissionCompleted:
     stream_begin_utc: int
     first_received_at: float
     last_received_at: float
+    first_received_wall_time: float
     packets: Tuple[TimedPacket, ...]
     reason: str
 
@@ -139,6 +140,7 @@ class _ActiveTransmission:
     generation: int
     first_received_at: float
     last_received_at: float
+    first_received_wall_time: float
     packets: List[Tuple[bytes, float]]
 
 
@@ -178,13 +180,29 @@ class TransmissionProducer:
         )
         self._thread.start()
 
-    def submit(self, payload: bytes, received_at: Optional[float] = None) -> None:
+    def submit(
+        self,
+        payload: bytes,
+        received_at: Optional[float] = None,
+        received_wall_time: Optional[float] = None,
+    ) -> None:
         self._inbox.put_nowait(
-            (bytes(payload), time.monotonic() if received_at is None else received_at)
+            (
+                bytes(payload),
+                time.monotonic() if received_at is None else received_at,
+                time.time() if received_wall_time is None else received_wall_time,
+            )
         )
 
-    def process_packet(self, payload: bytes, received_at: float) -> bool:
+    def process_packet(
+        self,
+        payload: bytes,
+        received_at: float,
+        received_wall_time: Optional[float] = None,
+    ) -> bool:
         """同步处理一包；测试可直接调用。返回是否被路由接受。"""
+        if received_wall_time is None:
+            received_wall_time = time.time()
         # 先结算旧 PTT 的空闲边界；线程调度延迟不能把间隔已满 2s 的同 UID
         # 新包错误续接到上一段。
         self.poll(received_at)
@@ -261,7 +279,13 @@ class TransmissionProducer:
             )
 
         if self._active is None or self._active.generation != decision.generation:
-            self._start(packet.header, decision.generation, received_at, payload)
+            self._start(
+                packet.header,
+                decision.generation,
+                received_at,
+                received_wall_time,
+                payload,
+            )
         else:
             self._active.packets.append((bytes(payload), received_at))
             self._active.last_received_at = received_at
@@ -282,6 +306,7 @@ class TransmissionProducer:
         header: MessageHeader,
         generation: int,
         received_at: float,
+        received_wall_time: float,
         payload: bytes,
     ) -> None:
         self._active = _ActiveTransmission(
@@ -289,6 +314,7 @@ class TransmissionProducer:
             generation=generation,
             first_received_at=received_at,
             last_received_at=received_at,
+            first_received_wall_time=received_wall_time,
             packets=[(bytes(payload), received_at)],
         )
         self.event_log.log(
@@ -327,6 +353,7 @@ class TransmissionProducer:
             stream_begin_utc=active.header.stream_begin_utc,
             first_received_at=active.first_received_at,
             last_received_at=active.last_received_at,
+            first_received_wall_time=active.first_received_wall_time,
             packets=packets,
             reason=reason,
         )
@@ -351,9 +378,9 @@ class TransmissionProducer:
                 continue
             if item is _STOP:
                 return
-            payload, received_at = item
+            payload, received_at, received_wall_time = item
             try:
-                self.process_packet(payload, received_at)
+                self.process_packet(payload, received_at, received_wall_time)
             except Exception:
                 self.logger.exception("处理 MQTT 语音包时发生未预期错误")
 

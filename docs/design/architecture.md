@@ -1,13 +1,13 @@
 # 总体架构
 
-> Merged from changes/001, 003, 004, 005, 007
+> Merged from changes/001, 002, 003, 004, 005, 007
 
 ## 1. 分层
 
 ```text
 ┌──────────────────────────────────────────────────┐
 │ service（I/O、事件与生命周期）                    │
-│ repeater / transmission / echo / config / logs  │
+│ repeater / transmission / echo / recorder / logs│
 ├──────────────────────────────────────────────────┤
 │ codecs（PCM16 8kHz mono ↔ 编码载荷）              │
 │ radpcm / opus_codec                              │
@@ -31,6 +31,7 @@
 | `TransmissionProducer` | 串行解析/过滤，组装一次获准 PTT 并产生完成事件 |
 | `TransmissionEventBus` | 进程内广播，每个消费者独立 FIFO 工作线程 |
 | `EchoService` | 消费完成事件，申请信道并按原时间轴发布回音 |
+| `Recorder` | 可选消费完成事件，将一次 PTT 录为一个文件并清理过期录音 |
 
 `EchoService` 是业务服务名称；`TransmissionConsumer` 只是它在事件架构中的角色。
 
@@ -44,9 +45,8 @@ MqttTransport / MQTT on_message
   → TransmissionProducer
   → TransmissionCompleted
   → TransmissionEventBus
-  → EchoService
-  → ChannelCoordinator.try_start_echo / ChannelLease.refresh
-  → MqttTransport submit / wait_for_publish
+  ├→ EchoService → ChannelCoordinator / MqttTransport publish
+  └→ Recorder → WAV 或原始编码文件
 ```
 
 一个订阅主题代表一个半双工信道，只组装当前获胜者。Echo 并不绕过冲突检测：
@@ -57,8 +57,8 @@ MqttTransport / MQTT on_message
 
 MQTT 回调只入队，所有网络包状态由单一生产者线程修改。收到 SIGTERM/Ctrl+C
 后由 CLI 把信号转换成关闭请求。服务先 quiesce MQTT 收发入口、取消 Echo、丢弃
-未完成 PTT 和待播事件，并等待业务线程全部退出，最后断开 MQTT；停机不会冲刷、
-启动新回放或在断连后继续发布。
+未完成 PTT 和待消费事件，并等待业务线程全部退出，最后断开 MQTT；停机不会冲刷、
+启动新回放、录音或在断连后继续发布。
 
 队列中的包以入队时保存的 monotonic 接收时间顺序结算边界；仅在队列为空时以
 当前时间检查空闲。停机先禁用 Echo 和事件消费，再等待生产者退出，关闭后的事件

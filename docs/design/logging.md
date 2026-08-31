@@ -1,6 +1,6 @@
 # 日志系统设计
 
-> Merged from changes/001, 005
+> Merged from changes/001, 002, 005
 
 ## 1. 双轨日志
 
@@ -24,9 +24,10 @@
 
 ## 4. 事件模式
 
-定义于 `docs/design/service.md`：服务、PTT、路由仲裁、Echo 回放与停止事件。
+定义于 `docs/design/service.md`：服务、PTT、路由仲裁、Echo 回放、录音与停止事件。
 路由事件包含 acquired/rejected/preempted/uplink_limited；Echo 路由事件区分获取、
-忙时拒绝和回放中被抢占。后续录音事件仍由 changes/002 扩展。
+忙时拒绝和回放中被抢占。录音事件覆盖开始、保存、丢弃、编码异常、rotate 删除与
+清理失败；运行日志同时记录解码、codec 变化和文件系统异常。
 
 ## 5. 决策
 

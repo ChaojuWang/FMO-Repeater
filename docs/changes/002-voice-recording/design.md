@@ -1,161 +1,115 @@
-# 详细设计：语音录制功能（Voice Recording）
+# 详细设计：语音录制与保留策略（Voice Recording）
 
-> status: designed（经 change 005 修订，待实施）
+> status: merged
 > 变更编号：002 ｜ 依赖：变更 001、005
 
-## 1. 概述
-
-新增 Recorder 事件消费者：每收到一个 `TransmissionCompleted`，解析其中的合法
-原始包并解码为 WAV（8kHz/16bit/mono）落盘，录制事件写入 JSONL 事件日志。
-
-**默认关闭**（`recording.enabled: false`），不影响现有部署；关闭时零开销 no-op。
-
-依赖的变更 001 成果：
-
-| 依赖 | 用途 |
-|---|---|
-| `ParsedPacket`（protocol/packet.py） | 已解析消息包：header 元数据 + frames（每帧含 encoded） |
-| `RadpcmDecoder`（codecs/radpcm.py） | RADPCM 帧 → 1280B PCM（含丢包恢复） |
-| `OpusDecoder` / `opus_is_available()`（codecs/opus_codec.py） | OPUS 帧 → 640B PCM / 依赖探测 |
-| `EventLog`（service/event_log.py） | 结构化录制事件 |
-| `TransmissionCompleted`（service/transmission.py） | 已经统一仲裁并封口的一次 PTT |
-
-## 2. 配置
-
-`config.py` 的 `DEFAULT_CONFIG` 新增节（加粗为相对现状新增）：
+## 1. 配置与规范化
 
 ```yaml
-**recording**:
-  **enabled: false**        # 默认关闭
-  **directory: recordings** # 输出根目录（相对工作目录）
+recording:
+  enabled: false
+  directory: "./recording"
+  max_total_size: "512M"
+  max_age: "1w"
 ```
 
-`validate_config` 增加：`enabled` 必须 bool；`enabled=true` 时 `directory` 非空字符串；
-目录名不得包含路径穿越（`..`）或以 `/` 开头的绝对路径以外的约束不设（允许绝对路径部署）。
+- 容量接受非负整数（直接表示字节）或字符串 `整数 + B/K/M/G/T`（大小写不敏感），按 1024 进制；
+  时长接受 `整数 + h/d/w`。数字或字符串 `0` 表示关闭对应限制。
+- 不接受负数、bool、小数、未知单位或缺少单位的非零时长。
+- `parse_size` 与 `parse_duration` 分别规范化为字节和秒；Recorder 只保存规范化整数。
+- enabled=true 时 directory 必须是非空字符串，路径分段不得包含 `..`；允许绝对路径。
 
-## 3. Recorder 类
+## 2. 事件时间（决策 R1）
 
-`fmo_repeater/service/recorder.py`：
+MQTT 回调同时采集 `time.monotonic()` 和 `time.time()`。前者继续用于仲裁、PTT
+超时和相对时序；后者作为 `TransmissionCompleted.first_received_wall_time`，用于
+生成真实日历文件名。两种时间不互相推导，避免系统校时影响路由逻辑。
+
+`MqttTransport.on_payload`、`TransmissionProducer.submit/process_packet` 增加可选墙钟
+参数；测试直接调用未提供时以当前 `time.time()` 补齐。
+
+## 3. Recorder 与单 PTT 文件（决策 R2）
 
 ```python
 class Recorder:
-    def __init__(self, config: Dict[str, Any], event_log: Optional[EventLog] = None)
-    def handle(self, transmission: TransmissionCompleted) -> None
+    def __init__(self, config, event_log=None, logger=None): ...
+    def handle(self, transmission: TransmissionCompleted) -> None: ...
+    def cleanup(self) -> None: ...
+    def stop(self) -> None: ...
 ```
 
-- 构造：读取 `recording` 节；`enabled=false` → 全方法 no-op（与 `EventLog` 同模式）；
-  `enabled=true` → 创建输出根目录（`os.makedirs(exist_ok=True)`）
-- `handle`：事件已经完成防循环、冲突仲裁与流边界判断；逐包解析后按 codec
-  segment 解码并落盘。
-- 线程模型：由 `TransmissionEventBus` 提供 Recorder 专属 FIFO 工作线程，
-  Recorder 无需与 MQTT/Echo 共享锁，也不阻塞其他消费者。
+- enabled=false 时全方法 no-op，不创建目录；RepeaterService 也不构造、不订阅。
+- enabled=true 时创建根目录、立即 cleanup，并注册专属 FIFO 消费者。
+- 每个完成事件按包/帧顺序解析；以首个有效帧 codec 为预期 codec。
+- RADPCM/OPUS 分别用有状态 decoder；codec 变化时更换 decoder，但 PCM 仍按顺序
+  拼接为一个 WAV。编码变化属于异常，记 WARNING 与 `recording_codec_changed`。
+- 单帧解码异常记 WARNING 并跳过；全部帧失败则不写文件。
 
-### 3.1 内部状态
+## 4. 文件名与原子落盘（决策 R3）
 
-```python
-_seq_counter: Dict[str, int]        # (callsign, 秒) → 已用序号，防文件名冲突
+```text
+{directory}/{YYYYMMDD-HHmmss-SSS}-{safe_callsign}-{uid}.{wav|opusraw|fmoraw}
 ```
 
-每次 `handle` 的局部状态为 `uid / callsign / stream_begin_utc / first_local /
-segments`；`_Segment`：`codec / frames`。跨事件只保留文件名序号计数器。
+- 时间为 PTT 首包 wall time 的本地时间，精确到毫秒。
+- 呼号用 `re.sub(r'[^\w.-]', '_', callsign)` 清洗；空、`.`、`..` 变为 `UNKNOWN`。
+- 不建立呼号子目录；同名目标允许覆盖。
+- WAV 固定 8000Hz、16bit、mono。临时文件写完后 `os.replace` 原子替换；异常清理
+  临时文件，记录 `recording_discarded(reason=io_error)`。
 
-## 4. 事件与编码段边界（决策 R1）
+正常情况下一个 PTT 只有一种编码。异常混合编码在 OPUS 可用时解码并拼为一个 WAV；
+纯 OPUS 且 OPUS 不可用时保存 `.opusraw`；混合编码且 OPUS 不可用时保存 `.fmoraw`。
+两种 raw 文件都按顺序拼接完整 `EncodedVoiceFrame.to_bytes()`，保留 8B 自描述头。
 
-| 事件 | 行为 |
+## 5. Rotate（决策 R4）
+
+- 仅管理根目录直属的 `.wav/.opusraw/.fmoraw` 普通文件，不递归、不碰其他文件。
+- 启动时及每个 PTT 成功保存后执行；先清年龄，再清总容量。
+- 年龄以 mtime 和 cleanup 时墙钟比较，`age > max_age` 才删除，边界保留。
+- 总容量超限时按 `(mtime, filename)` 从旧到新删除，直至 `<= max_total_size`；
+  单个新文件超额也可能立即删除。
+- 删除成功记 `recording_deleted`；失败记 WARNING 和 `recording_cleanup_failed`，继续处理。
+
+## 6. 事件
+
+| event | 关键字段 |
 |---|---|
-| 收到 `TransmissionCompleted` | 作为一个独立录音流 |
-| 事件内 `compress_mode` 变化 | 当前 segment 收口，新 codec 追加新 segment |
-| 停机时队列中未处理事件 | 遵循 Repeater 的立即取消语义，不额外冲刷 |
+| recording_stream_start | uid, callsign, stream_begin_utc, started_at |
+| recording_codec_changed | uid, callsign, from_codec, to_codec, frame |
+| recording_saved | uid, callsign, codec, file, frames, duration_ms, bytes, degraded? |
+| recording_discarded | uid, callsign, reason |
+| recording_deleted | file, bytes, reason(age_limit/size_limit) |
+| recording_cleanup_failed | file, reason |
 
-**备选否决**：Recorder 独立分流和超时——会与统一 ChannelCoordinator/Producer
-状态漂移；OPUS/RADPCM 按帧多文件——过度设计，codec segment 足够。
+`bytes` 是最终文件大小；`frames/duration_ms` 是成功写入 WAV 的帧，raw 降级则是全部
+原始帧。`codec` 为 RADPCM、OPUS 或 MIXED；degraded 仅在 raw 降级时为 true。
 
-## 5. 文件命名与目录布局（决策 R2）
+## 7. 生命周期与错误边界（决策 R5）
 
-```
-{directory}/{callsign}/{YYYYMMDD-HHmmss}-{uid}-{seq:03d}-{codec}.{wav|opusraw}
-```
+Recorder 在事件总线专属线程执行，不阻塞 MQTT 或 Echo 消费者。停机顺序为
+transport quiesce → Echo stop → Recorder stop → event bus stop。`stop()` 设置取消事件；
+Recorder 在逐包解析、codec 检查、逐帧解码、逐帧写入和 rotate 删除之间检查该事件，
+取消时清理尚未替换的临时文件并记录 `recording_discarded(reason=shutdown)`。已经完成
+原子替换的文件视为保存成功。同步文件系统调用本身不可抢占，但返回后不得继续后续工作。
+待处理录音事件不冲刷。意外包解析失败、无帧、全帧解码失败和 IO 错误均产生
+`recording_discarded`，不得抛出到消费者线程之外。
 
-示例：`recordings/BD8BOJ/20250618-143025-1234-001-RADPCM.wav`
+## 8. 测试
 
-- `YYYYMMDD-HHmmss`：流首包到达的**本地时间**
-- `uid`：发送者 UID（十进制）
-- `seq`：同一 `(callsign, 秒)` 下递增 3 位序号（跨 codec），启动后进程内累计
-- `codec`：`RADPCM` / `OPUS`；**每个 segment 一个文件**（§4），故 seq 递增天然区分
-- 降级（§6）扩展名 `.opusraw`，codec 段仍为 `OPUS`
-- callsign 清洗：`re.sub(r'[^\w.-]', '_', callsign)`，空呼号用 `UNKNOWN`，
-  结果 `.`/`..` 或空 → `UNKNOWN`（防路径穿越）
+- 配置正整数字节、缩写、0、大小写、非法值和目录校验。
+- RADPCM/OPUS/混合编码单 PTT 单文件；坏帧隔离和异常事件。
+- OPUS 不可用时 `.opusraw/.fmoraw` 的逐帧完整字节。
+- 毫秒命名、清洗、扁平目录和覆盖。
+- 启动/保存后 rotate、边界、删除失败与非录音文件保护。
+- RepeaterService 开关注册与完整事件到文件流程；全量回归。
+- 在途录音收到 stop 后退出、清理临时文件，且 RepeaterService 在等待总线前先取消 Recorder。
 
-**备选否决**：seq 用时间戳后缀（同一秒内仍可能冲突）；全局单调 seq（跨呼号
-重排后可读性差）。进程内 `(callsign, 秒)` 计数实现简单且确定性可测。
+## 9. 决策记录
 
-## 6. 解码与落盘（决策 R3/R4）
-
-`finalize` 时对每个 segment：
-
-- **RADPCM**：`RadpcmDecoder()` 逐帧 `decode(frame.to_bytes())`，PCM 顺序拼接 →
-  `wave` 标准库写 WAV（8000Hz / sampwidth=2 / nchannels=1 / 非压缩）
-- **OPUS + libopus 可用**：`OpusDecoder()` 逐帧解码（640B/帧）拼接 → 同上 WAV
-- **OPUS + libopus 缺失**（`opus_is_available() is False`）：降级写 `.opusraw` ——
-  逐帧拼接完整编码语音帧**含 8B 头**（事后可离线解码），事件记 `degraded: true`
-- 空 segment（0 帧）跳过不落盘，不产生事件
-
-**WAV 写入时机**：流结束一次性写盘（内存缓存编码帧）。60s 上限语音流
-≈750 RADPCM 帧 × 336B ≈ 250KB，内存可控（决策 R4；备选"边收边增量写"需自行
-维护 RIFF 头长度字段，复杂度不值）。
-
-## 7. RepeaterService 集成
-
-启用录音时由组合根注册独立消费者：
-
-| 位置 | 调用 |
-|---|---|
-| `RepeaterService.__init__` | 构造 `Recorder(config, event_log)` |
-| 事件总线注册 | `event_bus.subscribe("recorder", recorder.handle)` |
-| `recording.enabled=false` | 不构造、不订阅，接收路径零额外处理 |
-
-## 8. 事件模式扩展
-
-复用 `EventLog`，新增事件（`docs/design/logging.md` 已预留扩展位）：
-
-| event | 字段 |
-|---|---|
-| recording_stream_start | uid, callsign, stream_begin_utc |
-| recording_saved | uid, callsign, codec, file, frames, duration_ms, bytes, degraded |
-| recording_discarded | uid, callsign, reason（如 empty_segment） |
-
-`degraded` 仅 OPUS 降级时出现（True）；`duration_ms` = Σ帧时长（40/80ms × 帧数）。
-
-## 9. 错误处理
-
-- 解码单帧异常：跳过该帧、计数，不中断整流落盘（`recording_saved.frames` 为
-  实际成功帧数）
-- 写盘 IO 异常：记 `recording_discarded`（reason=io_error）+ 运行日志 WARNING，
-  服务继续运行
-- `feed` 全程 try/except（与 EchoService `_on_message` 同级防御，不影响网络线程）
-
-## 10. 测试设计
-
-`tests/test_recorder.py`：
-
-- 默认关闭：feed/finalize 全 no-op，无目录创建、无事件
-- RADPCM 流：合成包 → WAV 落盘 → `wave` 读回验证（8000/16bit/mono、样本数
-  = 640×帧数、内容与 RadpcmDecoder 直接解码一致）
-- OPUS 流（有 libopus）：WAV 样本数 = 320×帧数；无 libopus → `.opusraw` 存在、
-  字节流 = 编码帧序列（含 8B 头）、事件 `degraded: true`
-- 事件边界：两个完成事件产出两组文件；同事件 codec 变化出两个 segment 文件
-- 命名：同 (callsign, 秒) 两流 seq 001/002；非法呼号（空格/`..`/空）清洗
-- 事件：recording_saved/discarded 字段完整
-- RepeaterService 集成：mock MQTT 收包→完成事件→Recorder 消费并生成文件
-- `test_config.py` 增补：recording 节默认值/校验（enabled bool、空 directory 拒绝）
-
-## 11. 关键决策记录
-
-| # | 决策 | 备选 | 理由 |
-|---|---|---|---|
-| R1 | 直接消费统一完成事件 | Recorder 独立超时判定 | 与信道仲裁共用唯一 PTT 边界 |
-| R2 | `(callsign, 秒)` 内 3 位 seq 防文件名冲突 | 时间戳后缀/全局单调 seq | 同秒冲突确定性解决；命名可读、可测 |
-| R3 | segment 按 codec 切分文件 | 混合流单文件/按帧多文件 | WAV 单一 codec；opusraw 降级粒度自然 |
-| R4 | 流结束一次性写 WAV | 增量追加（自维护 RIFF 头） | 内存可控（≤~250MB 上限远低于语音流实际长度）；实现简单可靠 |
-| R5 | `.opusraw` 保留 8B 编码帧头 | 裸载荷拼接 | 可事后离线逐帧解码与溯源 |
-| R6 | 解码/写盘在锁外执行 | 全程持锁 | 不阻塞 MQTT 回调线程收包 |
+| # | 决策 | 理由 |
+|---|---|---|
+| R1 | 单调时钟与墙钟同时采集 | 路由稳定性和真实文件日期各自准确 |
+| R2 | 一个完成 PTT 一个文件 | 与用户对“一段对话”的边界一致 |
+| R3 | 扁平毫秒时间戳命名、允许覆盖 | 简洁可读，毫秒降低碰撞概率 |
+| R4 | 启动及保存后同步 rotate | 无额外维护线程且可限制活跃系统磁盘 |
+| R5 | 专属事件消费者、立即取消停机 | 不阻塞网络且保持现有生命周期语义 |

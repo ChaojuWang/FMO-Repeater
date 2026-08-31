@@ -9,6 +9,8 @@ from fmo_repeater.service.config import (
     DEFAULT_CONFIG,
     deep_merge,
     load_config,
+    parse_duration,
+    parse_size,
     save_default_config,
     validate_config,
 )
@@ -28,7 +30,7 @@ class TestDefaultConfig:
     def test_defaults_complete(self):
         for section in (
             'mqtt', 'topics', 'transmission', 'echo',
-            'event_log', 'logging',
+            'recording', 'event_log', 'logging',
         ):
             assert section in DEFAULT_CONFIG
         assert DEFAULT_CONFIG['transmission']['idle_timeout'] == 2.0
@@ -38,6 +40,12 @@ class TestDefaultConfig:
         assert DEFAULT_CONFIG['echo']['callsign_prefix'] == 'RE>'
         assert DEFAULT_CONFIG['echo']['max_duration'] == 30.0
         assert DEFAULT_CONFIG['event_log']['enabled'] is True
+        assert DEFAULT_CONFIG['recording'] == {
+            'enabled': False,
+            'directory': './recording',
+            'max_total_size': '512M',
+            'max_age': '1w',
+        }
 
     def test_daemon_section_removed(self):
         """changes/008：daemon 节不再作为配置事实源，PID 文件由 CLI 管理"""
@@ -110,6 +118,51 @@ class TestValidateConfig:
         cfg['mqtt']['port'] = 70000
         with pytest.raises(ValueError, match="port"):
             validate_config(cfg)
+
+    @pytest.mark.parametrize(
+        ('value', 'expected'),
+        [
+            ('1B', 1), ('2k', 2048), ('512M', 512 * 1024 ** 2),
+            ('3G', 3 * 1024 ** 3), ('1t', 1024 ** 4),
+            (1048576, 1048576), (0, 0), ('0', 0),
+        ],
+    )
+    def test_parse_recording_size(self, value, expected):
+        assert parse_size(value) == expected
+
+    @pytest.mark.parametrize(
+        ('value', 'expected'),
+        [('1h', 3600), ('7D', 7 * 86400), ('1w', 7 * 86400), (0, 0), ('0', 0)],
+    )
+    def test_parse_recording_duration(self, value, expected):
+        assert parse_duration(value) == expected
+
+    @pytest.mark.parametrize('value', [-1, True, 1.5, '1.5M', '12', '1P', None])
+    def test_bad_recording_size(self, value):
+        cfg = self._base()
+        cfg['recording']['max_total_size'] = value
+        with pytest.raises(ValueError, match='max_total_size'):
+            validate_config(cfg)
+
+    @pytest.mark.parametrize('value', [-1, True, 1, 1.5, '1.5d', '7', '1m', None])
+    def test_bad_recording_age(self, value):
+        cfg = self._base()
+        cfg['recording']['max_age'] = value
+        with pytest.raises(ValueError, match='max_age'):
+            validate_config(cfg)
+
+    def test_recording_enabled_requires_safe_directory(self):
+        cfg = self._base()
+        cfg['recording']['enabled'] = True
+        for directory in ('', 'recording/../outside', r'recording\..\outside'):
+            cfg['recording']['directory'] = directory
+            with pytest.raises(ValueError, match='recording.directory'):
+                validate_config(cfg)
+
+    def test_recording_absolute_directory_is_allowed(self):
+        cfg = self._base()
+        cfg['recording'].update(enabled=True, directory='/srv/fmo/recording')
+        assert validate_config(cfg) is True
 
     @pytest.mark.parametrize("value", [-1, 3, "0", True])
     def test_bad_mqtt_qos(self, value):

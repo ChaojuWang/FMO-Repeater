@@ -36,6 +36,13 @@ echo:
   uid: 65535                # 重放时写入的非零 UID；0 为非法配置
   callsign_prefix: "RE>"    # 非空且 UTF-8 编码不超过 12B；原呼号变为 "RE>BD8BOJ"
 
+# 语音录制
+recording:
+  enabled: false
+  directory: "./recording"
+  max_total_size: "512M"
+  max_age: "1w"
+
 # 结构化事件日志（JSONL，每行一个 JSON 事件）
 event_log:
   enabled: true                     # 是否启用

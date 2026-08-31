@@ -109,6 +109,12 @@ def service_config(tmp_path):
             'vendor': 0x2000, 'uid': 65535,
             'callsign_prefix': 'RE>',
         },
+        'recording': {
+            'enabled': False,
+            'directory': str(tmp_path / 'recording'),
+            'max_total_size': '512M',
+            'max_age': '1w',
+        },
         'event_log': {
             'enabled': True,
             'file': str(tmp_path / "events.jsonl"),

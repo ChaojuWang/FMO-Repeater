@@ -1,6 +1,6 @@
 # 测试体系设计
 
-> Merged from changes/001, 003, 005, 006, 007
+> Merged from changes/001, 002, 003, 005, 006, 007
 
 ## 1. 框架与入口
 
@@ -21,9 +21,10 @@
 | tests/test_codec_opus.py | 可用性探测与降级、roundtrip、VBR 变长、PLC 空帧、reset |
 | tests/test_transmission.py | PTT 完成边界、冲突隔离、事件不可变模型与消费者隔离 |
 | tests/test_echo_service.py | Echo 路由申请、固定 streamBeginUTC、头重写、截断、抢占与立即取消 |
+| tests/test_recorder.py | 单 PTT WAV、OPUS/raw 降级、codec 异常、原子写入、在途取消、年龄/容量 rotate |
 | tests/test_mqtt_transport.py | Paho 连接配置、QoS、发布成功/失败/超时/取消、quiesce 与断连顺序 |
-| tests/test_repeater_service.py | 组合根、非主线程构造、幂等停机及消费者退出后断连 |
-| tests/test_config.py | deep_merge、默认值、加载合并、校验矩阵（vendor、Echo UID/前缀等）、示例配置有效性 |
+| tests/test_repeater_service.py | 组合根、Recorder 条件注册、非主线程构造、幂等停机及消费者退出后断连 |
+| tests/test_config.py | deep_merge、默认值、录音整数字节/缩写、校验矩阵及示例配置有效性 |
 | tests/test_event_log.py | JSONL 写入/解析、no-op、目录创建、轮转、Unicode |
 | tests/test_integration_mqtt.py | **集成**（marker=integration，默认排除）：broker 连接回环、Echo 端到端重放、SIGTERM 优雅停止 |
 
@@ -49,6 +50,7 @@
   stream_begin_utc/srv_uid/smeter）
 - **SNR 度量**：去直流后计算（ADPCM 直流抑制特性），阈值依据决策 D7
 - **OPUS skipif**：`pytest.mark.skipif(not opus_is_available())`
+- **Recorder 降级注入**：monkeypatch OPUS 可用性和文件系统错误，不依赖线上 broker
 
 ## 5. 验收
 

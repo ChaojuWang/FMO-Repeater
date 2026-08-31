@@ -5,6 +5,7 @@
 """
 
 import os
+import re
 from typing import Any, Dict
 
 import yaml
@@ -43,6 +44,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                                    # 客户端按"自己发的"自过滤，设备收不到回声）
         'callsign_prefix': 'RE>',
     },
+    'recording': {
+        'enabled': False,
+        'directory': './recording',
+        'max_total_size': '512M',
+        'max_age': '1w',
+    },
     'event_log': {
         'enabled': True,
         'file': 'logs/events.jsonl',
@@ -60,6 +67,56 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # PID 文件由 CLI --pid-file 控制，默认 /tmp/fmo_repeater.pid；
     # 模式由显式 start --daemon 控制。旧配置中的 daemon 节会被忽略。
 }
+
+
+_SIZE_RE = re.compile(r'^(\d+)\s*([BKMGT])$', re.IGNORECASE)
+_DURATION_RE = re.compile(r'^(\d+)\s*([HDW])$', re.IGNORECASE)
+_SIZE_MULTIPLIERS = {
+    'B': 1,
+    'K': 1024,
+    'M': 1024 ** 2,
+    'G': 1024 ** 3,
+    'T': 1024 ** 4,
+}
+_DURATION_MULTIPLIERS = {'H': 3600, 'D': 86400, 'W': 7 * 86400}
+
+
+def parse_size(value: Any) -> int:
+    """将容量配置规范化为字节；0 表示不限制。"""
+    if isinstance(value, bool):
+        raise ValueError("容量不能是布尔值")
+    if isinstance(value, int):
+        if value >= 0:
+            return value
+        raise ValueError("容量不能是负数")
+    if not isinstance(value, str):
+        raise ValueError("容量必须是 0 或带 B/K/M/G/T 单位的字符串")
+    text = value.strip()
+    if text == '0':
+        return 0
+    match = _SIZE_RE.fullmatch(text)
+    if match is None:
+        raise ValueError("容量必须使用非负整数及 B/K/M/G/T 单位")
+    return int(match.group(1)) * _SIZE_MULTIPLIERS[match.group(2).upper()]
+
+
+def parse_duration(value: Any) -> int:
+    """将保留期限配置规范化为秒；0 表示不限制。"""
+    if isinstance(value, bool):
+        raise ValueError("保留期限不能是布尔值")
+    if isinstance(value, int):
+        if value == 0:
+            return 0
+        raise ValueError("非零保留期限必须带 h/d/w 单位")
+    if not isinstance(value, str):
+        raise ValueError("保留期限必须是 0 或带 h/d/w 单位的字符串")
+    text = value.strip()
+    if text == '0':
+        return 0
+    match = _DURATION_RE.fullmatch(text)
+    if match is None:
+        raise ValueError("保留期限必须使用非负整数及 h/d/w 单位")
+    return int(match.group(1)) * _DURATION_MULTIPLIERS[match.group(2).upper()]
 
 
 def deep_merge(base: Dict, override: Dict) -> Dict:
@@ -105,7 +162,8 @@ def load_config(config_file: str = 'config.yaml') -> Dict[str, Any]:
 def validate_config(config: Dict[str, Any]) -> bool:
     """校验配置完整性与合理性，失败抛 ValueError"""
     required_sections = [
-        'mqtt', 'topics', 'transmission', 'echo', 'event_log', 'logging'
+        'mqtt', 'topics', 'transmission', 'echo', 'recording',
+        'event_log', 'logging'
     ]
     for section in required_sections:
         if section not in config:
@@ -172,6 +230,25 @@ def validate_config(config: Dict[str, Any]) -> bool:
         raise ValueError(
             f"呼号前缀 UTF-8 编码后不得超过 {CALLSIGN_SIZE} 字节"
         )
+
+    # 语音录制
+    recording = config['recording']
+    if not isinstance(recording.get('enabled'), bool):
+        raise ValueError("recording.enabled 必须是布尔值")
+    if recording.get('enabled'):
+        directory = recording.get('directory')
+        if not isinstance(directory, str) or not directory.strip():
+            raise ValueError("recording.directory 不能为空（enabled=true 时）")
+        if '..' in re.split(r'[/\\]+', directory):
+            raise ValueError("recording.directory 不得包含路径穿越 '..'")
+    try:
+        parse_size(recording.get('max_total_size'))
+    except ValueError as exc:
+        raise ValueError(f"recording.max_total_size 无效: {exc}") from exc
+    try:
+        parse_duration(recording.get('max_age'))
+    except ValueError as exc:
+        raise ValueError(f"recording.max_age 无效: {exc}") from exc
 
     # 事件日志
     event_log = config['event_log']

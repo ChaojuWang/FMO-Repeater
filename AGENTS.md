@@ -20,6 +20,7 @@
 - **完整协议栈**：64B 消息头 / 传输帧 / 编码语音帧 / CRC32 / 聚合规则（MTU 1400B、250ms）
 - **语音编解码**：RADPCM（IMA ADPCM 纯 Python）/ OPUS（opuslib 可选）
 - **结构化日志**：JSONL 事件日志 + 文本运行日志
+- **语音录制**：每个完成 PTT 一个文件，支持 OPUS 降级和目录保留策略
 
 ## 常用命令
 
@@ -64,6 +65,7 @@ fmo_repeater/
     ├── logging_setup.py   #   运行日志
     ├── event_log.py       #   JSONL 事件日志
     ├── echo.py            #   EchoService（防循环/头重写/时间轴重放）
+    ├── recorder.py        #   PTT 录音、原始降级与 rotate
     └── daemon.py          #   Unix 守护进程
 main.py                    # CLI 入口
 run_tests.sh               # 一键测试
@@ -93,9 +95,9 @@ docs/                      # SDD：DESIGN_PROCESS.md / design/ / changes/
 
 ## 配置说明
 
-`config.yaml`（模板 `config.yaml.example`）：mqtt / topics / echo /
-event_log / logging / daemon 六节。校验要点：vendor 不得在保留区；
-event_log.enabled=true 时 file 必填。
+`config.yaml`（模板 `config.yaml.example`）包含 mqtt / topics / transmission / echo /
+recording / event_log / logging。录音默认关闭，启用时默认写入 `./recording`，
+总量 `512M`、保留 `1w`。
 
 ## 开发约定
 

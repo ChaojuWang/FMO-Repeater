@@ -18,6 +18,7 @@ FMO（FM Over Internet）是通过互联网中继 FM 信号的设备。本项目
 - **语音编解码**：RADPCM（IMA ADPCM，纯 Python 完整实现）与 OPUS（libopus）
 - **结构化事件日志**：JSONL 格式，独立于运行日志
 - **单信道仲裁与事件架构**：FMO §8 路由裁决，完整 PTT 作为进程内事件广播
+- **PTT 语音录制**：可选 WAV/原始帧归档，支持容量与期限清理
 
 ## 🚀 快速开始
 
@@ -85,7 +86,17 @@ echo:
 event_log:             # JSONL 结构化事件日志
   enabled: true
   file: logs/events.jsonl
+
+recording:
+  enabled: false
+  directory: ./recording
+  max_total_size: 512M
+  max_age: 1w
 ```
+
+录音启用后，每个完成 PTT 保存为
+`YYYYMMDD-HHmmss-SSS-呼号-UID.wav`。容量可直接填字节数或使用 B/K/M/G/T，保留期支持 h/d/w，
+对应值为 0 时关闭限制；缺少 OPUS 解码能力时保存可供离线处理的原始编码文件。
 
 **防循环机制**：重放包携带本服务 vendor + 呼号前缀；接收侧据此跳过自己的
 回声（`vendor` 匹配且呼号以 `RE>` 开头，或 UID 匹配），不会无限转发。
@@ -108,6 +119,7 @@ fmo_repeater/
 - 当前 FMO 网络使用明文 MQTT，服务不提供 TLS 配置；应部署在受信网络并限制 broker ACL
 - 配置文件中的 MQTT 凭据为明文，勿提交真实 `config.yaml`
 - 事件日志含呼号/UID 等通联元数据，注意磁盘与隐私管理
+- 录音包含实际通联语音，应按当地法规配置访问权限和保留期限
 
 ## 📄 许可证
 

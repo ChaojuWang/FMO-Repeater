@@ -31,6 +31,7 @@ def make_event(payloads, offsets=None):
         stream_begin_utc=1000,
         first_received_at=10.0,
         last_received_at=10.0 + offsets[-1],
+        first_received_wall_time=1700000000.0,
         packets=tuple(TimedPacket(p, o) for p, o in zip(payloads, offsets)),
         reason="idle_timeout",
     )
